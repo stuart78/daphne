@@ -23,6 +23,7 @@
 
 import {
   SHEET_DURATION_S,
+  type Layout,
   machineFieldRect,
   relativeToFiducials,
   soloFieldRect,
@@ -113,6 +114,13 @@ export const soloPayload = (
  */
 export const LAYOUT_SHEET = 'FULL';
 
+/** The note-and-octave sheet. Same field, different bands inside it. */
+export const LAYOUT_TONAL = 'TONE';
+
+/** Which bands a payload's sheet carries. Anything unrecognised reads as FULL. */
+export const layoutOf = (payload: SheetPayload | null): Layout =>
+  payload?.role === LAYOUT_TONAL ? 'TONE' : 'FULL';
+
 /**
  * Payload for the sheet.
  *
@@ -124,10 +132,11 @@ export const LAYOUT_SHEET = 'FULL';
 export const sheetPayload = (
   sheetId: string,
   durationMs = SHEET_DURATION_S * 1000,
+  layout: Layout = 'FULL',
 ): SheetPayload => ({
   sheetId,
   lane: 0,
-  role: LAYOUT_SHEET,
+  role: layout === 'TONE' ? LAYOUT_TONAL : LAYOUT_SHEET,
   durationMs,
   field: relativeToFiducials(machineFieldRect()),
 });

@@ -6,7 +6,7 @@ sound, on paper or on screen, and the machine plays what you drew.
 Built for running workshops. Print the sheets, let people draw on them, play the
 results.
 
-**[Download v0.1.0](https://github.com/stuart78/oramics/releases/tag/v0.1.0)**
+**[Download v0.2.0](https://github.com/stuart78/oramics/releases/tag/v0.2.0)**
 for macOS, Windows or Linux. The macOS build is signed and notarised, so it
 opens normally. Windows is unsigned and SmartScreen will warn once.
 
@@ -121,6 +121,47 @@ Level was set by shining a torch bulb at a photoresistor. Filament thermal mass
 plus asymmetric cell recovery means no envelope has a sharp attack, and released
 notes hang on longer than the drawing says.
 
+## Pitch as notes
+
+The Hertz strip is the machine as built, and it stays the default. It is also
+hard to draw a tune on: octaves fall unevenly up a linear scale, so middle C and
+the C above sit a hand's width apart at the bottom and nearly touch at the top.
+
+**Notes** splits pitch into two bands, a note band of twelve rows over an octave
+band of eight rows. This is the shape of Oram's own later design, and of Tom
+Richards' Mini Oramics, rather than the 1969 machine. Switch with the Hertz and
+Notes buttons on the pitch lane, or ⇧⌘H.
+
+- **Dots or lines** (⇧⌘L). A dot sets a note that holds until the next mark,
+  and only where the dot starts counts. A line is followed as it moves, one row
+  at a time, with enough hysteresis that a hand resting on a row boundary does
+  not flicker between two notes.
+- **Key and scale.** Chromatic by default. Pick a root and a scale and marks
+  snap to the nearest note in it, ties going down, never wrapping into the next
+  octave. With a scale chosen the notes outside it are shaded.
+- **What you see is what plays.** The reading is drawn over the marks as a
+  staircase, with dashed lines where the relays hold a note across blank paper.
+- The octave band is octaves 1 to 8, so middle C is the C row in octave 4. The
+  frequency is still rounded to a whole Hertz by the relays, so middle C plays
+  at 262.
+
+**Blank sheet** prints the note sheet when the app is in Notes mode: light grey
+rows for the notes, with the sharps shaded, and eight octave rows below. The QR
+says which sheet it is, so importing a photo of one switches the app to Notes.
+
+## Keys
+
+| | |
+|---|---|
+| Space | play or stop |
+| ⇧⌘H | pitch in Hertz or Notes |
+| ⇧⌘L | notes as dots or lines |
+| ⌘+ ⌘- ⌘0 | zoom in, out, fit |
+| ⌘D | light or dark |
+| ⌘S ⌘O | save, open |
+| ⌘N | clear and start again |
+| ⇧⌘A | export audio |
+
 ## The 30-second guarantee
 
 The printed time field is exactly 300 mm at 10 mm/s, so a sheet is 30.000 s by
@@ -212,7 +253,7 @@ rather than hiding the loss. The rest goes where it can:
 |---|---|
 | pitch | the sounding note as a frequency, so the strip is linear in Hertz and octaves fall unevenly, exactly as the machine has them |
 | amplitude | the note's velocity, in the timbre belonging to the part it came from, so an arrangement moving between parts changes timbre |
-| vibrato | the modulation wheel, or the pitch bend where there is no wheel |
+| vibrato | the modulation wheel, or the pitch bend where there is no wheel. In Delay mode that strip is an echo time instead, so an imported file sets echo times, not vibrato |
 | reverberation | the reverb send, CC 91 |
 | transport | nothing. A blank transport is normal speed, and the file's tempo is already in the note times |
 
@@ -220,6 +261,94 @@ A file longer than thirty seconds is fitted rather than cut: the note times are
 mapped onto the sheet and the transport speed is set so the piece still plays at
 its own tempo. Notes above 1000 Hz have no place on the strip and are counted,
 not clipped silently.
+
+In Notes mode a MIDI note lands as a note row and an octave row instead, which
+is what it already is. Only notes outside octaves 1 to 8 are refused.
+
+## Audio and MIDI out
+
+**Export ▸ Audio** renders one pass of the sheet to a WAV file: the same engine
+that plays live, run faster than real time in a worker, so there is nothing to
+record and nobody has to press Stop at the right moment. One pass means however
+long the speed and the transport strip make it, plus a short tail so the plate
+and the light bulbs die away. Sixteen-bit mono, as the machine was, or stereo
+with Mono off in the Fidelity bar. The file is
+normalised so its loudest moment peaks at -1 dB: the machine leaves room for all
+four timbres at once, so a piece using one or two would otherwise come out
+barely audible.
+
+**Export ▸ MIDI** comes from the same render. While it runs, the machine is
+sampled every ten milliseconds for the pitch the sheet asks for, the pitch that
+actually sounds and the level. A note starts when the level comes up and a new
+one when the pitch moves more than about half a semitone. What sounded between
+the notes goes in as pitch bend (twelve-semitone range, so vibrato fits), and
+the level goes in as expression, CC 11, because the machine's loudness is a
+contour, not a strike. The file is in time with the WAV.
+
+## Waveform presets
+
+Each timbre has a **Preset** menu: sine, saw and square paint that shape onto
+the slide, and **Blank** wipes it to clear glass. A blank slide passes the beam
+straight through, so the photocell sees a steady light and that timbre is
+silent: a way to take a voice out without drawing its amplitude down to nothing,
+and a clean sheet to paint on. **Supersaw** paints a saw and adds six detuned copies, 25 cents
+either side. **Detune** leaves the painting alone and adds two copies, 12 cents
+either side. The detuned copies are each a scanner of their own reading the same
+slide, which the machine never had. They are drawn on the slide as thin orange
+lines along each copy's edge, and the tag in the corner (×7 ±25¢) says how many
+and how far. Click the tag to go back to one voice.
+
+## The effects strips
+
+Two of the strips can be pointed at something other than what they drove on the
+machine. Both switches sit on the lane itself.
+
+**Vibrato or Delay.** As built, strip 8 bends the pitch either side of the
+centre line, by up to the amount set in the top bar. Switched to **Delay**, the
+same line is an echo time instead: low is 20 ms, high is 1.2 seconds, spaced
+exponentially so the useful times are spread out, with guide lines at an eighth,
+a quarter, a half and one second. The top bar then sets the feedback. The time
+is glided to rather than jumped to, so dragging the line up bends the pitch of
+what is already in the echo, the way moving a tape head would. The echoes go
+into the reverb send, and keep the pan of whatever made them.
+
+**Plate or Room.** The reverb strip's destination. **Plate** is the steel sheet,
+the likeliest thing the send reached in a Workshop of that period. **Room** is
+the same tank run at about a third of the size, damped and less smeared, with
+early reflections in front of it: an echo chamber rather than a plate. Changing
+the space starts the new one empty, so the tail of the old one stops rather than
+turning into it.
+
+## Pan
+
+Each timbre has a pan slider, L to R, set once rather than drawn. The machine
+was mono, so pan is heard only with **Mono** off in the Fidelity bar; moving a
+slider while Mono is on turns it off and says so. The pan is equal power with
+the centre at unity, so a centred timbre sounds exactly as it does in mono. The
+plate reverb stays mono and returns to both sides. With Mono off, an audio
+export is stereo. Double-click a slider to centre it.
+
+## Starting again
+
+**Clear**, or File ▸ New (⌘N), blanks every strip, paints four fresh slides and
+puts every setting back to the machine as built: Hertz pitch, vibrato rather
+than delay, plate rather than room, mono, one voice per timbre, everything
+centred. Any imported paper goes with it. There is no undo, so it asks first.
+
+## Picking up where you left off
+
+The session is kept as you work and restored at launch: the drawing, the slides
+and the settings, written a second after each change and again as the window
+closes. It lives in the app's data folder as `autosave.daphne`, the same format
+as a saved file. A photographed sheet's paper backdrop is not kept, only what
+was read off it.
+
+## The projector
+
+**Projector** (⇧⌘P) opens a second window full screen on the external display,
+or as a window if there is only one. It shows every lane with the read heads
+moving, and in Notes mode the rows and the reading. It holds no state of its
+own: the editor sends it everything when it opens and every change after.
 
 ## The performance file
 
@@ -245,7 +374,10 @@ base64, one byte per pixel, with the layout named in the file.
     "pitch": { "values": [null, 0.5], "strokes": [[120, 480]] }
   },
   "slides": [{ "width": 512, "height": 256, "layout": "row-major-u8", "opacity": "..." }],
-  "settings": { "globalSpeed": 1, "vibratoCents": 50, "fidelity": {} }
+  "settings": {
+    "globalSpeed": 1, "vibratoCents": 50, "fidelity": {},
+    "pitchMode": "hertz", "markMode": "lines", "root": 0, "scale": "chromatic"
+  }
 }
 ```
 
@@ -258,7 +390,9 @@ whole load. See [`packages/app/src/session.ts`](packages/app/src/session.ts).
 Working: the voice, the printable sheets, in-app drawing and painting, the slide
 randomiser, live audio, the projector window, plate reverb, the transport strip,
 save and open, a zoomable timeline, PDF export back onto the same template,
-importing a photograph or scan of a marked-up sheet, and importing MIDI.
+importing a photograph or scan of a marked-up sheet, importing MIDI, pitch as
+notes and octaves with a key and scale, audio and MIDI export, waveform
+presets, and the session kept between launches.
 
 The loop closes: draw, print, let somebody mark it up by hand, photograph it,
 hear what they drew.

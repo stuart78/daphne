@@ -15,7 +15,7 @@
  * different height still reads.
  */
 
-import { machineBands, slidePanels, type Rect } from './geometry.js';
+import { machineBands, slidePanels, type Layout, type Rect } from './geometry.js';
 import { PITCH_MARKS, PITCH_MAX_HZ, getRole } from './roles.js';
 
 /**
@@ -54,10 +54,10 @@ const ruleAt = (x: number, w: number, y: number): Rect => ({
  * already ignored, so the header, the gutter names and the footer need no
  * entry here.
  */
-export const sheetFurniture = (): Rect[] => {
+export const sheetFurniture = (layout: Layout = 'FULL'): Rect[] => {
   const out: Rect[] = [];
 
-  for (const band of machineBands()) {
+  for (const band of machineBands(layout)) {
     const f = band.rect;
     const role = getRole(band.role);
     const valueY = (v: number): number => f.y + f.h * (1 - v);
@@ -107,6 +107,12 @@ export const sheetFurniture = (): Rect[] => {
     // The pitch band carries a column of frequency numbers all the way down.
     if (role.kind === 'logpitch') {
       out.push({ x: f.x + LABEL.insetMm, y: f.y, w: LABEL.widthMm - 1.5, h: f.h });
+    }
+
+    // Note and octave rows are named at both edges, all the way down.
+    if (role.kind === 'notes' || role.kind === 'octaves') {
+      out.push({ x: f.x + LABEL.insetMm, y: f.y, w: 5, h: f.h });
+      out.push({ x: f.x + f.w - LABEL.insetMm - 5, y: f.y, w: 5, h: f.h });
     }
   }
 

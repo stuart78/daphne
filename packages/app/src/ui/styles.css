@@ -383,3 +383,174 @@ button.primary.on {
   color: var(--ink);
   border-color: var(--accent);
 }
+
+/* Mode switches on a lane's label line: pitch, the vibrato strip, the reverb. */
+.pitch-tools,
+.lane-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.pitch-tools label,
+.lane-tools label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+}
+
+.pitch-tools select,
+.lane-tools select {
+  background: var(--control);
+  color: var(--ink);
+  border: 1px solid var(--control-line);
+  border-radius: 4px;
+  font: inherit;
+  padding: 2px 4px;
+}
+
+.segmented {
+  display: inline-flex;
+}
+
+.segmented button {
+  padding: 2px 9px;
+  font-size: 11px;
+  border-radius: 0;
+  color: var(--muted);
+}
+
+.segmented button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.segmented button:last-child {
+  border-radius: 0 4px 4px 0;
+  margin-left: -1px;
+}
+
+.segmented button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a0e08;
+}
+
+/* Import and Export: one button each, opening a short list. */
+.menu-button {
+  position: relative;
+}
+
+.menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 170px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--control-line);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+}
+
+.menu-list button {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+
+.menu-list button:hover {
+  background: var(--control);
+}
+
+/* Preset picker and detune tag on each timbre, pushed right with the dice. */
+.lane-label .preset {
+  margin-left: auto;
+  background: var(--control);
+  color: var(--muted);
+  border: 1px solid var(--control-line);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 10px;
+  padding: 2px 4px;
+}
+
+.lane-label .preset ~ .dice {
+  margin-left: 0;
+}
+
+.unison-tag {
+  padding: 1px 7px;
+  font-size: 10px;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Four timbres share one row. Their headers stay on one line, so every slide
+   starts at the same height. */
+.timbre .lane-label {
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+}
+
+.timbre .lane-label strong {
+  white-space: nowrap;
+}
+
+.timbre .lane-label .muted {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.timbre .lane-label .preset {
+  flex: 0 0 auto;
+  min-width: 84px;
+}
+
+.timbre-pad {
+  position: relative;
+}
+
+.timbre-pad .unison-tag {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: var(--panel);
+  white-space: nowrap;
+}
+
+/* Pan on each timbre: small, since four share a row. */
+.timbre .lane-label .pan {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.timbre .lane-label .pan input {
+  width: 56px;
+  accent-color: var(--accent);
+}
+
+/* Set but not heard: dimmed until Mono is off. */
+.timbre .lane-label .pan.muted-control {
+  opacity: 0.5;
+}
+
+.timbre .lane-label .pan ~ .preset {
+  margin-left: 0;
+}

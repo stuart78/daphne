@@ -17,7 +17,8 @@ By default you get one sheet: every time-domain lane as a band, with the four
 timbres in a strip underneath. One page to print, one page to scan back.
 
 Options
-  --layout <l>      sheet (default) | solo
+  --layout <l>      sheet (default) | tonal | solo
+                    tonal splits pitch into a note band and an octave band
   --roles <a,b,c>   With --layout solo: which roles, one full sheet each.
   --neumes          Add the binary pitch sheet. It needs a page of its own.
   --list            Print the role table and exit.
@@ -28,7 +29,7 @@ Options
 Roles for --layout solo: ${ROLES.map((r) => r.id).join(', ')}
 `;
 
-type Layout = 'sheet' | 'solo';
+type Layout = 'sheet' | 'tonal' | 'solo';
 
 const main = async (): Promise<void> => {
   // `pnpm run generate -- --all` forwards the separator itself, and parseArgs
@@ -63,8 +64,8 @@ const main = async (): Promise<void> => {
   }
 
   const layout = values.layout as Layout;
-  if (!['sheet', 'solo'].includes(layout)) {
-    throw new Error(`--layout must be sheet or solo, got "${values.layout}"`);
+  if (!['sheet', 'tonal', 'solo'].includes(layout)) {
+    throw new Error(`--layout must be sheet, tonal or solo, got "${values.layout}"`);
   }
 
   const gridStyle = values.grid as GridStyle;
@@ -86,7 +87,8 @@ const main = async (): Promise<void> => {
       });
     });
   } else {
-    pages.push({ kind: 'machine', options: { payload: sheetPayload(sheetId), gridStyle } });
+    const payload = sheetPayload(sheetId, undefined, layout === 'tonal' ? 'TONE' : 'FULL');
+    pages.push({ kind: 'machine', options: { payload, gridStyle } });
   }
 
   // The binary pitch grid cannot shrink to a band — twelve bit rows plus a

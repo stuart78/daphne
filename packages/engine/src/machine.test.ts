@@ -2,7 +2,17 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { ControlLane } from './lane.js';
-import { Machine, PITCH_RANGE, TIMBRE_COUNT } from './machine.js';
+import {
+  LOWEST_OCTAVE,
+  Machine,
+  NOTE_ROWS,
+  OCTAVE_ROWS,
+  PITCH_RANGE,
+  TIMBRE_COUNT,
+  rowValue,
+  unisonRatios,
+} from './machine.js';
+import { echoSeconds } from './echo.js';
 import { Slide } from './slide.js';
 import { DEFAULT_VACTROL, DirectGain, Vactrol } from './vactrol.js';
 import { TABLE_SIZE, Wavetable } from './wavetable.js';
@@ -464,4 +474,229 @@ test('switching optical amplitude off changes the envelope, not the pitch', () =
     attackPeak(false) > attackPeak(true) * 2,
     'the bypass should reach full level far sooner than the bulb and cell can',
   );
+});
+
+// --- note and octave ---------------------------------------------------------
+
+test('a note and an octave spell the pitch they name', () => {
+  // A4 is row 9 in octave 4, and the relays round it to whole Hertz like any
+  // other pitch.
+  const m = new Machine({ sampleRate: SR, fidelity: { relayLag: false } });
+  m.setPitchMode('notes');
+  openVoice(m);
+  loadConstant(m.lanes.pitch, rowValue(9, NOTE_ROWS));
+  loadConstant(m.lanes.octave, rowValue(4 - LOWEST_OCTAVE, OCTAVE_ROWS));
+  m.bounce(0.05);
+  assert.equal(m.meters.hz, 440);
+
+  // Middle C, which the machine can only spell as 262.
+  loadConstant(m.lanes.pitch, rowValue(0, NOTE_ROWS));
+  m.bounce(0.05);
+  assert.equal(m.meters.hz, 262);
+});
+
+test('a note with no octave drawn plays around middle C', () => {
+  const m = new Machine({ sampleRate: SR, fidelity: { relayLag: false } });
+  m.setPitchMode('notes');
+  openVoice(m);
+  loadConstant(m.lanes.pitch, rowValue(9, NOTE_ROWS));
+  m.bounce(0.05);
+  assert.equal(m.meters.hz, 440, 'an untouched octave lane should read as octave 4');
+});
+
+test('octaves are exactly an octave apart', () => {
+  const at = (octaveRow: number): number => {
+    const m = new Machine({ sampleRate: SR, fidelity: { relayLag: false, integerHzPitch: false } });
+    m.setPitchMode('notes');
+    openVoice(m);
+    loadConstant(m.lanes.pitch, rowValue(9, NOTE_ROWS));
+    loadConstant(m.lanes.octave, rowValue(octaveRow, OCTAVE_ROWS));
+    m.bounce(0.05);
+    return m.meters.hz;
+  };
+  for (let row = 0; row < OCTAVE_ROWS - 1; row++) {
+    assert.ok(Math.abs(at(row + 1) / at(row) - 2) < 1e-6, `row ${row} to ${row + 1}`);
+  }
+});
+
+test('a note steps to the next without sounding the ones between', () => {
+  /*
+   * Lanes interpolate between samples, which is right for a contour and wrong
+   * for a choice: stepping from E to A would pass through F, F# and G for a few
+   * milliseconds each. Nobody wrote those notes, so a note lane steps.
+   */
+  const m = new Machine({ sampleRate: SR, fidelity: { relayLag: false, integerHzPitch: false } });
+  m.setPitchMode('notes');
+  openVoice(m);
+  const lane = new Float32Array(2);
+  lane[0] = rowValue(4, NOTE_ROWS); // E
+  lane[1] = rowValue(9, NOTE_ROWS); // A
+  m.lanes.pitch.load(lane, 1);
+
+  const heard = new Set<number>();
+  for (let i = 0; i < 100; i++) {
+    m.bounce(0.01);
+    heard.add(Math.round(12 * Math.log2(m.meters.hz / 440) + 69));
+  }
+  for (const midi of heard) {
+    assert.ok(midi === 64 || midi === 69, `sounded MIDI ${midi}, which is between the two notes`);
+  }
+});
+
+test('the Hertz mode is untouched by all this', () => {
+  const m = new Machine({ sampleRate: SR, fidelity: { relayLag: false } });
+  openVoice(m);
+  loadConstant(m.lanes.pitch, 0.44);
+  loadConstant(m.lanes.octave, rowValue(7, OCTAVE_ROWS));
+  m.bounce(0.05);
+  assert.equal(m.meters.hz, 440, 'the octave lane should mean nothing in Hertz mode');
+});
+
+// ---------------------------------------------------------------------------
+// Unison: detuned copies of a timbre, beyond the machine
+// ---------------------------------------------------------------------------
+
+test('unison voices spread either side, leaving the original in the middle', () => {
+  assert.deepEqual(unisonRatios({ voices: 1, cents: 20 }), []);
+  const cents = unisonRatios({ voices: 5, cents: 20 }).map((r) => Math.round(1200 * Math.log2(r)));
+  assert.deepEqual(cents, [-20, -10, 10, 20]);
+  // Two voices: the original and one sharp copy, which is what makes it beat.
+  assert.deepEqual(unisonRatios({ voices: 2, cents: 8 }).map((r) => Math.round(1200 * Math.log2(r))), [8]);
+});
+
+/** How much the level of a block swings over its length, in 20 ms windows. */
+const envelopeSwing = (buf: Float32Array): number => {
+  const win = Math.round(SR * 0.02);
+  const levels: number[] = [];
+  for (let i = 0; i + win <= buf.length; i += win) {
+    let s = 0;
+    for (let k = i; k < i + win; k++) s += buf[k]! ** 2;
+    levels.push(Math.sqrt(s / win));
+  }
+  return Math.max(...levels) - Math.min(...levels);
+};
+
+for (const servoScanner of [true, false]) {
+  test(`two detuned voices beat, one voice does not (${servoScanner ? 'scanner' : 'wavetable'})`, () => {
+    const render = (voices: number): Float32Array => {
+      const m = new Machine({ sampleRate: SR, fidelity: { opticalAmplitude: false, relayLag: false, servoScanner } });
+      openVoice(m);
+      m.setUnison(0, { voices, cents: 30 });
+      m.bounce(0.5);
+      return m.bounce(1);
+    };
+    const plain = envelopeSwing(render(1));
+    const detuned = envelopeSwing(render(2));
+    assert.ok(detuned > plain * 4 + 0.01, `detuned swing ${detuned.toFixed(3)}, plain ${plain.toFixed(3)}`);
+  });
+}
+
+test('seven voices on every timbre still render well over real time', () => {
+  const m = new Machine({ sampleRate: SR });
+  openVoice(m, 4);
+  for (let t = 0; t < TIMBRE_COUNT; t++) m.setUnison(t, { voices: 7, cents: 25 });
+  const started = performance.now();
+  m.bounce(2);
+  const ms = performance.now() - started;
+  assert.ok(ms < 1000, `2 s of audio took ${ms.toFixed(0)} ms`);
+});
+
+// ---------------------------------------------------------------------------
+// Pan: where each timbre sits, beyond the machine
+// ---------------------------------------------------------------------------
+
+const rms = (buf: Float32Array): number => Math.sqrt(buf.reduce((s, v) => s + v * v, 0) / buf.length);
+
+const stereo = (pan: number, monoSum: boolean): [Float32Array, Float32Array] => {
+  const m = new Machine({ sampleRate: SR, fidelity: { monoSum, opticalAmplitude: false, relayLag: false } });
+  openVoice(m);
+  m.setPan(0, pan);
+  const l = new Float32Array(SR / 2);
+  const r = new Float32Array(SR / 2);
+  m.render(l, l.length, r);
+  m.render(l, l.length, r);
+  return [l, r];
+};
+
+test('a timbre panned hard left is silent on the right', () => {
+  const [l, r] = stereo(-1, false);
+  assert.ok(rms(l) > 0.01);
+  assert.ok(rms(r) < rms(l) * 1e-3, `right is ${rms(r)}`);
+});
+
+test('a centred timbre is the same in both channels, and the same as mono', () => {
+  const [l, r] = stereo(0, false);
+  const [mono] = stereo(0, true);
+  for (let i = 0; i < l.length; i += 97) {
+    assert.ok(Math.abs(l[i]! - r[i]!) < 1e-6);
+    assert.ok(Math.abs(l[i]! - mono[i]!) < 1e-6);
+  }
+});
+
+test('with Mono on, pan is ignored, as it would be on the machine', () => {
+  const [l, r] = stereo(-1, true);
+  for (let i = 0; i < l.length; i += 97) assert.equal(l[i], r[i]);
+});
+
+test('panning keeps the overall level', () => {
+  const [cl, cr] = stereo(0, false);
+  const [hl, hr] = stereo(-1, false);
+  const power = (a: Float32Array, b: Float32Array): number => rms(a) ** 2 + rms(b) ** 2;
+  assert.ok(Math.abs(power(hl, hr) / power(cl, cr) - 1) < 0.05);
+});
+
+// ---------------------------------------------------------------------------
+// The vibrato strip as a delay, beyond the machine
+// ---------------------------------------------------------------------------
+
+test('the lane height sets the delay time', () => {
+  // Two settings of the line, two gaps between the repeats.
+  const repeatAt = (height: number): number => {
+    const m = new Machine({
+      sampleRate: SR,
+      fidelity: { opticalAmplitude: false, relayLag: false, servoScanner: false },
+      echo: { feedback: 0.6, mix: 1, glideS: 0.001, dampHz: 12000 },
+    });
+    m.setVibratoMode('delay');
+    loadConstant(m.lanes.pitch, 0.5);
+    loadConstant(m.lanes.vibrato, height);
+    // A short burst, then silence, so the repeat stands on its own.
+    m.lanes.amp1.load(Float32Array.from({ length: 200 }, (_, i) => (i < 4 ? 1 : 0)), 1);
+    // One burst, not one a second: a looping lane would strike again at 1 s.
+    for (const lane of Object.values(m.lanes)) lane.loop = false;
+    const buf = m.bounce(1.6);
+    const start = Math.round(SR * 0.05);
+    let loudest = start;
+    for (let i = start; i < buf.length; i++) {
+      if (Math.abs(buf[i]!) > Math.abs(buf[loudest]!)) loudest = i;
+    }
+    return loudest / SR;
+  };
+
+  const short = repeatAt(0.2);
+  const long = repeatAt(0.8);
+  assert.ok(long > short * 2, `height 0.8 repeated at ${long} s, height 0.2 at ${short} s`);
+  assert.ok(short > echoSeconds(0.2) * 0.5, `the first repeat should be near ${echoSeconds(0.2)} s`);
+});
+
+test('in delay mode the vibrato strip stops bending the pitch', () => {
+  const hz = (mode: 'vibrato' | 'delay'): number => {
+    const m = new Machine({ sampleRate: SR, vibratoDepthCents: 400 });
+    m.setVibratoMode(mode);
+    openVoice(m);
+    loadConstant(m.lanes.vibrato, 1);
+    m.bounce(0.05);
+    return m.meters.hz;
+  };
+  assert.ok(hz('vibrato') > hz('delay') * 1.2, 'a full-height line should bend the pitch up');
+  assert.equal(hz('delay'), Math.round(hz('delay')), 'and in delay mode leave it where it was');
+});
+
+test('clear glass is silent, with no thump as the amplitude comes up', () => {
+  // The photocell sees a steady beam through an unpainted slide, so there is
+  // nothing to hear, including at the moment the voice opens.
+  const m = new Machine({ sampleRate: SR });
+  m.setSlide(0, Slide.fromField(new Float32Array(64 * 32), 64, 32));
+  openVoice(m);
+  assert.equal(peak(m.bounce(0.5)), 0);
 });

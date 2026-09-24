@@ -10,11 +10,13 @@ import {
   buildDocument,
   makeSheetId,
   sheetPayload,
+  type Layout,
   type Overlays,
   type Page,
 } from '@oramics/template';
 
-import { LANE_DEFS, SLIDE_HEIGHT, SLIDE_WIDTH, type LaneMap } from './lanes.js';
+import { LANE_DEFS, SLIDE_HEIGHT, SLIDE_WIDTH, roleFor, type LaneMap } from './lanes.js';
+import { saveBytes } from './save.js';
 
 export interface ExportOptions {
   lanes: LaneMap;
@@ -23,6 +25,8 @@ export interface ExportOptions {
   sheetId?: string;
   /** Leave bands blank where nothing was drawn, rather than printing the rest line. */
   omitUntouched?: boolean;
+  /** Which sheet to print onto. The note-and-octave sheet has pitch in two bands. */
+  layout?: Layout;
 }
 
 /**
@@ -58,18 +62,21 @@ export const buildSessionPdf = async (opts: ExportOptions): Promise<Uint8Array> 
 
   // Bands and timbres share one sheet, so they share one overlay map. The keys
   // do not collide: lanes are role ids, timbres are WAV1 to WAV4.
+  const layout = opts.layout ?? 'FULL';
   const overlays: Overlays = {};
   for (const def of LANE_DEFS) {
+    const role = roleFor(def, layout);
+    if (!role) continue; // no band for it on this sheet
     const { values } = opts.lanes[def.name];
     if (opts.omitUntouched !== false && isUntouched(values, def.rest)) continue;
-    overlays[def.role] = values;
+    overlays[role] = values;
   }
   opts.slides.forEach((field, i) => {
     overlays[`WAV${i + 1}`] = topEdge(field, SLIDE_WIDTH, SLIDE_HEIGHT);
   });
 
   const pages: Page[] = [
-    { kind: 'machine', options: { payload: sheetPayload(sheetId), overlays } },
+    { kind: 'machine', options: { payload: sheetPayload(sheetId, undefined, layout), overlays } },
   ];
 
   return buildDocument({ pages, title: `Daphne session — ${sheetId}` });
@@ -81,31 +88,24 @@ export const buildSessionPdf = async (opts: ExportOptions): Promise<Uint8Array> 
  * The same page the app exports a session onto, so a piece drawn on paper and a
  * piece drawn on screen land on identical geometry and import the same way.
  */
-export const buildBlankPdf = async (sheetId?: string): Promise<Uint8Array> => {
+export const buildBlankPdf = async (sheetId?: string, layout: Layout = 'FULL'): Promise<Uint8Array> => {
   const id = (sheetId ?? makeSheetId()).toUpperCase();
   return buildDocument({
-    pages: [{ kind: 'machine', options: { payload: sheetPayload(id) } }],
+    pages: [{ kind: 'machine', options: { payload: sheetPayload(id, undefined, layout) } }],
     title: `Daphne sheet ${id}`,
   });
 };
 
-/** Hand a PDF to the shell to save, or fall back to a browser download. */
-const save = async (bytes: Uint8Array, name: string): Promise<string | null> => {
-  const shell = window.oramics;
-  if (shell) return shell.savePdf(bytes, name);
-
-  const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  URL.revokeObjectURL(url);
-  return name;
-};
+const save = (bytes: Uint8Array, name: string): Promise<string | null> => saveBytes(bytes, name, 'pdf');
 
 export const exportSessionPdf = async (opts: ExportOptions): Promise<string | null> =>
   save(await buildSessionPdf(opts), 'daphne-session.pdf');
 
-export const exportBlankPdf = async (sheetId?: string): Promise<string | null> =>
-  save(await buildBlankPdf(sheetId), 'daphne-sheet.pdf');
+export const exportBlankPdf = async (
+  sheetId?: string,
+  layout: Layout = 'FULL',
+): Promise<string | null> =>
+  save(
+    await buildBlankPdf(sheetId, layout),
+    layout === 'TONE' ? 'daphne-sheet-notes.pdf' : 'daphne-sheet.pdf',
+  );

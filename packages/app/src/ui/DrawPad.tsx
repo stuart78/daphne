@@ -44,6 +44,19 @@ export interface DrawPadProps {
   backdrop?: ImageBitmap | null;
   /** Draw the extracted line over the paper. */
   showReading?: boolean;
+  /**
+   * A band of discrete choices rather than a continuous height: twelve notes or
+   * eight octaves. Draws the rows and names them at both edges.
+   */
+  rows?: Rows | null;
+  /**
+   * What the marks are being read as, one chosen row per column. Drawn over the
+   * marks so what you see is what plays: the step from a mark to a note is where
+   * a wrong note comes from, and it should be visible rather than guessed at.
+   */
+  reading?: Float32Array | null;
+  /** Dots place a short mark per click; lines draw continuously. */
+  markMode?: 'dots' | 'lines';
   /** The slice of the sheet on show. Shared across every lane. */
   view: View;
   onViewChange: (next: View) => void;
@@ -52,8 +65,30 @@ export interface DrawPadProps {
   disabled?: boolean;
 }
 
+export interface Rows {
+  count: number;
+  /** Names, bottom row first. */
+  labels: string[];
+  /** Rows shaded, like a keyboard's black keys. */
+  shaded?: (row: number) => boolean;
+  /** Rows that are in play. The rest are dimmed, so a key reads at a glance. */
+  active?: (row: number) => boolean;
+}
+
 /** Ink weight. Thick enough to read across a room on the projector. */
 const INK_WIDTH = 3;
+
+/**
+ * Columns a dot covers: 100 ms of the field.
+ *
+ * Long enough to see at full zoom, short enough that dots placed close together
+ * stay separate notes. Only where a dot starts sets its note, so its length is
+ * about being visible, not about how long the note lasts.
+ */
+const DOT_COLUMNS = 10;
+
+/** Radius of the head drawn at the start of a dot, in pixels. */
+const DOT_RADIUS = 4.5;
 
 export const DrawPad = ({
   track,
@@ -67,6 +102,9 @@ export const DrawPad = ({
   theme = 'dark',
   backdrop = null,
   showReading = true,
+  rows = null,
+  reading = null,
+  markMode = 'lines',
   view,
   onViewChange,
   duration,
@@ -130,6 +168,35 @@ export const DrawPad = ({
     }
     /** Sheet fraction to pixels. */
     const px = (f: number): number => ((f - view.from) / span) * w;
+
+    if (rows) {
+      const rowH = h / rows.count;
+      for (let r = 0; r < rows.count; r++) {
+        const top = h - (r + 1) * rowH;
+        if (rows.shaded?.(r)) {
+          ctx.fillStyle = pal.grid;
+          ctx.globalAlpha = 0.9;
+          ctx.fillRect(0, top, w, rowH);
+          ctx.globalAlpha = 1;
+        }
+        if (rows.active && !rows.active(r)) {
+          // Out of the key: washed back so the rows you can land on stand out.
+          ctx.fillStyle = pal.bg;
+          ctx.globalAlpha = 0.6;
+          ctx.fillRect(0, top, w, rowH);
+          ctx.globalAlpha = 1;
+        }
+      }
+      ctx.strokeStyle = pal.grid;
+      ctx.lineWidth = 1;
+      for (let r = 1; r < rows.count; r++) {
+        const y = Math.round(h - r * rowH) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
+      }
+    }
 
     // Time grid, heavier every fifth line.
     const step = gridStep(duration * span);
@@ -224,7 +291,96 @@ export const DrawPad = ({
         }
       }
       ctx.stroke();
+      // A dot is a point on the paper: the place it starts is the note, so
+      // that is where the mark should look heaviest.
+      if (markMode === 'dots') {
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.beginPath();
+        ctx.arc(toX(from), toY(values[from]!), DOT_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+      }
     });
+
+    if (reading && showReading) {
+      // Stepped, because a note is a choice between rows: drawn as a staircase
+      // it reads as the notes that play, where a smoothed line would suggest a
+      // glide that is not there.
+      ctx.strokeStyle = pal.accent;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = 'miter';
+      ctx.lineCap = 'butt';
+      ctx.beginPath();
+      let open = false;
+      const first = Math.max(0, Math.floor(view.from * (n - 1)) - 1);
+      const last = Math.min(n - 1, Math.ceil(view.to * (n - 1)) + 1);
+      for (let i = first; i <= last; i++) {
+        const v = reading[i]!;
+        if (!Number.isFinite(v)) {
+          open = false;
+          continue;
+        }
+        const x = toX(i);
+        const y = toY(v);
+        if (!open) {
+          ctx.moveTo(x, y);
+          open = true;
+        } else {
+          const prev = reading[i - 1]!;
+          if (Number.isFinite(prev) && prev !== v) ctx.lineTo(x, toY(prev));
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+
+      /*
+       * The holds, dashed.
+       *
+       * Blank paper after a mark is not silence: the relays keep the last note
+       * until the next mark arrives. Leaving the gap empty would show a rest
+       * that is not there.
+       */
+      ctx.setLineDash([3, 4]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let held = Number.NaN;
+      let heldFrom = -1;
+      for (let i = 0; i <= n; i++) {
+        const v = i < n ? reading[i]! : Number.NaN;
+        if (Number.isFinite(v)) {
+          if (heldFrom >= 0 && i > heldFrom) {
+            ctx.moveTo(toX(heldFrom), toY(held));
+            ctx.lineTo(toX(i), toY(held));
+            ctx.lineTo(toX(i), toY(v));
+          }
+          held = v;
+          heldFrom = -1;
+        } else if (Number.isFinite(held) && heldFrom < 0) {
+          heldFrom = i - 1;
+        }
+      }
+      if (heldFrom >= 0) {
+        ctx.moveTo(toX(heldFrom), toY(held));
+        ctx.lineTo(toX(n - 1), toY(held));
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    if (rows) {
+      // Named at both edges, so nobody counts rows up from the bottom.
+      const rowH = h / rows.count;
+      ctx.fillStyle = pal.muted;
+      ctx.font = `${Math.max(8, Math.min(11, rowH * 0.8))}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.textBaseline = 'middle';
+      for (let r = 0; r < rows.count; r++) {
+        const y = h - (r + 0.5) * rowH;
+        ctx.textAlign = 'left';
+        ctx.fillText(rows.labels[r]!, 4, y);
+        ctx.textAlign = 'right';
+        ctx.fillText(rows.labels[r]!, w - 4, y);
+      }
+      ctx.textAlign = 'left';
+    }
 
     if (head !== null && head >= view.from && head <= view.to) {
       ctx.strokeStyle = pal.accent;
@@ -235,7 +391,7 @@ export const DrawPad = ({
       ctx.lineTo(x, h);
       ctx.stroke();
     }
-  }, [backdrop, bipolar, duration, fill, guides, head, showReading, theme, view]);
+  }, [reading, rows, markMode, backdrop, bipolar, duration, fill, guides, head, showReading, theme, view]);
 
   useEffect(() => {
     paint();
@@ -276,6 +432,15 @@ export const DrawPad = ({
       for (let i = Math.max(0, lo); i <= Math.min(values.length - 1, hi); i++) {
         values[i] = Number.NaN;
         strokes[i] = 0;
+      }
+    } else if (markMode === 'dots') {
+      // One dot per press, placed where the press lands. Dragging does not
+      // smear it: a dot means a note starting here, and only its start counts.
+      if (from !== null) return;
+      const end = Math.min(values.length, index + DOT_COLUMNS);
+      for (let i = index; i < end; i++) {
+        values[i] = value;
+        strokes[i] = strokeId.current;
       }
     } else if (from === null || from === index) {
       values[index] = value;

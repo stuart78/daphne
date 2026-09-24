@@ -68,6 +68,15 @@ class AllPass {
   }
 }
 
+/**
+ * Which space the send goes to.
+ *
+ * `plate` is the machine's own answer, or the likeliest one. `room` is the same
+ * tank run small and dry, with early reflections in front of it: an echo
+ * chamber rather than a sheet of steel, which the Workshop also had.
+ */
+export type ReverbSpace = 'plate' | 'room';
+
 export interface PlateOptions {
   /** 0-1. Higher holds longer. */
   decay: number;
@@ -81,6 +90,16 @@ export interface PlateOptions {
   modulationHz: number;
   /** Roll off the input before the tank, so the plate does not fizz. */
   inputCutoffHz: number;
+  /**
+   * Scales every delay in the tank. 1 is the plate; smaller is a smaller space,
+   * which arrives sooner and repeats faster.
+   */
+  size: number;
+  /**
+   * Level of the early reflections in front of the tank. A plate has none: it
+   * is one sheet, struck all over at once. A room is defined by them.
+   */
+  earlyLevel: number;
 }
 
 export const DEFAULT_PLATE: PlateOptions = {
@@ -90,7 +109,42 @@ export const DEFAULT_PLATE: PlateOptions = {
   modulationDepth: 8,
   modulationHz: 0.9,
   inputCutoffHz: 7200,
+  size: 1,
+  earlyLevel: 0,
 };
+
+/**
+ * A room: short, damped, less smeared, with distinct early reflections. The
+ * tail is the same tank at about a third of the size, which is what makes it
+ * sound like walls rather than steel.
+ */
+export const DEFAULT_ROOM: PlateOptions = {
+  decay: 0.55,
+  damping: 0.62,
+  diffusion: 0.5,
+  modulationDepth: 3,
+  modulationHz: 1.3,
+  inputCutoffHz: 5200,
+  size: 0.34,
+  earlyLevel: 0.7,
+};
+
+export const reverbOptions = (space: ReverbSpace): PlateOptions =>
+  space === 'room' ? DEFAULT_ROOM : DEFAULT_PLATE;
+
+/**
+ * Early reflections: first bounces off the walls, before the tail builds. Times
+ * in milliseconds with their levels, from a small hard room.
+ */
+const EARLY: [number, number][] = [
+  [7, 0.84],
+  [13, 0.68],
+  [19, 0.55],
+  [29, 0.46],
+  [37, 0.38],
+  [53, 0.3],
+  [67, 0.24],
+];
 
 /** Dattorro's tank, scaled from his 29.76 kHz prototype to the actual rate. */
 const TANK = {
@@ -125,6 +179,8 @@ export class PlateReverb {
   private readonly delayA2: DelayLine;
   private readonly delayB1: DelayLine;
   private readonly delayB2: DelayLine;
+  private readonly earlyLine: DelayLine;
+  private readonly early: [number, number][];
 
   private readonly aLen1: number;
   private readonly aLen2: number;
@@ -141,8 +197,15 @@ export class PlateReverb {
   constructor(sampleRate: number, opts: PlateOptions = DEFAULT_PLATE) {
     this.sampleRate = sampleRate;
     this.opts = opts;
-    const scale = sampleRate / 29761;
+    const scale = (sampleRate / 29761) * opts.size;
     const s = (n: number): number => Math.max(1, Math.round(n * scale));
+
+    // Scaled with the space, so a small room's first bounces arrive sooner.
+    this.early = EARLY.map(([ms, level]) => [
+      Math.max(1, Math.round((ms / 1000) * sampleRate * opts.size)),
+      level,
+    ]);
+    this.earlyLine = new DelayLine(Math.max(...this.early.map(([d]) => d)) + 8);
 
     this.preDiffusers = [
       new AllPass(s(TANK.preA), 0.75),
@@ -165,6 +228,10 @@ export class PlateReverb {
     this.delayB2 = new DelayLine(this.bLen2 + 8);
   }
 
+  /**
+   * Everything but `size` and the early reflection times, which are built into
+   * the delay lines. Changing those means a new reverb.
+   */
   setOptions(opts: PlateOptions): void {
     this.opts = opts;
   }
@@ -179,6 +246,7 @@ export class PlateReverb {
     this.delayA2.clear();
     this.delayB1.clear();
     this.delayB2.clear();
+    this.earlyLine.clear();
     this.inputLp = 0;
     this.dampA = 0;
     this.dampB = 0;
@@ -192,7 +260,22 @@ export class PlateReverb {
     const lpCoeff = Math.min(1, (2 * Math.PI * this.opts.inputCutoffHz) / this.sampleRate);
     this.inputLp += (x - this.inputLp) * lpCoeff;
 
-    let v = this.inputLp;
+    /*
+     * The early reflections, where there are any. They are heard in their own
+     * right and they also feed the tank, so the tail grows out of them rather
+     * than starting alongside them.
+     */
+    let early = 0;
+    if (this.opts.earlyLevel > 0) {
+      this.earlyLine.push(this.inputLp);
+      for (let i = 0; i < this.early.length; i++) {
+        const tap = this.early[i]!;
+        early += this.earlyLine.read(tap[0]) * tap[1];
+      }
+      early *= this.opts.earlyLevel / this.early.length;
+    }
+
+    let v = this.inputLp + early;
     for (let i = 0; i < this.preDiffusers.length; i++) {
       v = this.preDiffusers[i]!.process(v * (0.5 + diffusion * 0.5));
     }
@@ -236,6 +319,6 @@ export class PlateReverb {
       this.delayB1.read(this.bLen1 * 0.36) +
       this.delayB1.read(this.bLen1 * 0.72) +
       this.delayB2.read(this.bLen2 * 0.48);
-    return (taps / 6) * OUTPUT_GAIN;
+    return (taps / 6) * OUTPUT_GAIN + early * OUTPUT_GAIN;
   }
 }

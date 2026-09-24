@@ -17,7 +17,13 @@
  * a watch folder later.
  */
 
-import { PAGE, SHEET_DURATION_S, type SheetPayload } from '@oramics/template';
+import {
+  PAGE,
+  SHEET_DURATION_S,
+  layoutOf,
+  type Layout,
+  type SheetPayload,
+} from '@oramics/template';
 
 import { FIDUCIAL_PAGE_POINTS, findFiducials, type FindOptions } from './fiducials.js';
 import { invert, residual, solveHomography, type Matrix3 } from './homography.js';
@@ -64,6 +70,8 @@ export interface ImportSuccess {
   fitMm: number;
   /** Which way up the sheet was, and how sure. */
   orientation: Orientation;
+  /** Which bands it carries. */
+  layout: Layout;
 }
 
 export interface ImportError {
@@ -135,7 +143,14 @@ export const importSheet = (image: Gray, opts: ImportOptions = {}): ImportResult
   // Calibrate against the corner squares before reading anything: they are the
   // only ink on the sheet whose true darkness is known.
   const inkDepth = measureInkDepth(prepare(image, { paper }), corners, found.sizePx);
-  const contents = readSheet(prepare(image, { paper, inkDepth, ...opts }), toImage, opts);
+  // The QR says which bands the sheet carries. A note-and-octave sheet has two
+  // pitch bands where the original has one, so reading it as the original
+  // would put every band below pitch in the wrong place.
+  const layout = layoutOf(payload);
+  const contents = readSheet(prepare(image, { paper, inkDepth, ...opts }), toImage, {
+    ...opts,
+    layout,
+  });
 
   return {
     ok: true,
@@ -146,6 +161,7 @@ export const importSheet = (image: Gray, opts: ImportOptions = {}): ImportResult
     durationS: payload ? payload.durationMs / 1000 : SHEET_DURATION_S,
     fitMm,
     orientation: oriented,
+    layout,
   };
 };
 

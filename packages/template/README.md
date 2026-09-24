@@ -8,6 +8,7 @@ thing to scan, not thirteen.
 
 ```bash
 pnpm template                            # the sheet
+pnpm template -- --layout tonal          # pitch as a note band and an octave band
 pnpm template -- --neumes                # ...plus the binary pitch sheet
 pnpm template -- --layout solo --roles AMP1,VIB   # one full page per role
 pnpm template -- --grid nonphoto         # blue grid, for channel dropout
@@ -54,8 +55,9 @@ duration, and the field rectangle relative to the top-left fiducial centre:
 ORAM1*A3F91C2D*00*MACH*30000*260*180*3000*1660
 ```
 
-On the combined sheets the role slot holds a *layout* id, `MACH` or `SLID`, and
-the band subdivision is looked up from `machineBands()` / `slidePanels()`
+On the combined sheets the role slot holds a *layout* id: `MACH` or `SLID`, or
+on the one-page sheet `FULL` (Hertz pitch) or `TONE` (note and octave bands).
+The band subdivision is looked up from `machineBands()` / `slidePanels()`
 for that payload version rather than spelled out in the QR. Eight band
 rectangles would not fit, and they are fully determined by the version anyway.
 Bump `PAYLOAD_VERSION` if the subdivision ever changes, or old sheets will be
@@ -77,6 +79,8 @@ version 3 symbol at 18 mm, about 0.6 mm per module.
 | `unipolar` | `AMP1-4`, `REV`, `TRN` | time | 0 at bottom rail, 1 at top |
 | `bipolar` | `VIB` | time | -1 to +1 about a heavy centre |
 | `logpitch` | `PCH` | time | linear Hz, 0 to 1000 |
+| `notes` | `NOTE` | time | twelve rows, C at the bottom, sharps shaded |
+| `octaves` | `OCT` | time | eight rows, octave 1 at the bottom |
 | `bcd` | `NEU` | time, 1 s columns | 4 digits of 4 tracks, weighted 1 2 4 2 |
 | `cycle` | `WAV1-4` | **phase, 0 to 360 degrees** | -1 to +1 |
 

@@ -25,6 +25,16 @@ const SETTINGS: SessionSettings = {
     servoScanner: true,
     transportLane: true,
   },
+  pitchMode: 'hertz',
+  markMode: 'lines',
+  root: 0,
+  scale: 'chromatic',
+  unison: Array.from({ length: 4 }, () => ({ voices: 1, cents: 0 })),
+  presets: ['', '', '', ''],
+  pan: [0, 0, 0, 0],
+  vibratoMode: 'vibrato',
+  echoFeedback: 0.35,
+  reverbSpace: 'plate',
 };
 
 /** A session with two separate marks on the pitch lane and four painted slides. */
@@ -134,4 +144,19 @@ test('a lane the file does not carry loads blank', () => {
   assert.equal(after.lanes.reverb.values.length, LANE_SAMPLES);
   assert.ok(Number.isNaN(after.lanes.reverb.values[0]!));
   assert.ok(after.lanes.pitch.values[200]! > 0, 'the rest of the file should still load');
+});
+
+test('the pitch settings come back, and an older file falls back to Hertz', () => {
+  const before = sample();
+  before.settings = { ...SETTINGS, pitchMode: 'notes', markMode: 'dots', root: 2, scale: 'major' };
+  const after = decodeSession(encodeSession(before), SETTINGS);
+  assert.equal(after.settings.pitchMode, 'notes');
+  assert.equal(after.settings.markMode, 'dots');
+  assert.equal(after.settings.root, 2);
+  assert.equal(after.settings.scale, 'major');
+
+  // A file saved before notes existed has no pitchMode at all.
+  const parsed = JSON.parse(encodeSession(sample())) as { settings: Record<string, unknown> };
+  delete parsed.settings.pitchMode;
+  assert.equal(decodeSession(JSON.stringify(parsed), SETTINGS).settings.pitchMode, 'hertz');
 });

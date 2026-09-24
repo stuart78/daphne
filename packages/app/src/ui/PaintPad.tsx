@@ -24,6 +24,12 @@ export interface PaintPadProps {
   /** Only a repaint trigger — the colours come from the CSS tokens. */
   theme?: string;
   displayHeight: number;
+  /**
+   * Detuned copies playing alongside the painting, as column offsets. Drawn as
+   * thin lines along the shifted top edge, so a supersaw looks like more than
+   * a saw.
+   */
+  ghosts?: number[];
 }
 
 export const PaintPad = ({
@@ -31,10 +37,11 @@ export const PaintPad = ({
   width,
   height,
   onChange,
-  brush = 9,
+  brush = 13,
   erasing = false,
   theme = 'dark',
   displayHeight,
+  ghosts = [],
 }: PaintPadProps): JSX.Element => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bufferRef = useRef<HTMLCanvasElement | null>(null);
@@ -87,15 +94,58 @@ export const PaintPad = ({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(buffer, 0, 0, w, h);
-  }, [width, height, theme]);
+
+    /*
+     * Detuned copies, one thin line each along the edge the spot rides,
+     * shifted either side. A supersaw shows as a fan of saws rather than one.
+     * They wrap round, since the slide is one cycle of a loop.
+     */
+    if (ghosts.length > 0) {
+      const top = new Float32Array(width).fill(Number.NaN);
+      for (let x = 0; x < width; x++) {
+        for (let y = 0; y < height; y++) {
+          if (f[y * width + x]! >= 0.5) {
+            top[x] = y;
+            break;
+          }
+        }
+      }
+      ctx.strokeStyle = pal.accent;
+      ctx.lineWidth = 1.5;
+      ctx.lineJoin = 'round';
+      for (const dx of ghosts) {
+        ctx.beginPath();
+        let open = false;
+        for (let x = 0; x < width; x++) {
+          const y = top[(((x - dx) % width) + width) % width]!;
+          if (!Number.isFinite(y)) {
+            open = false;
+            continue;
+          }
+          const px = (x / (width - 1)) * w;
+          const py = (y / height) * h;
+          if (open) ctx.lineTo(px, py);
+          else ctx.moveTo(px, py);
+          open = true;
+        }
+        ctx.stroke();
+      }
+    }
+  }, [width, height, theme, ghosts]);
 
   useEffect(() => {
     paint();
   }, [paint, field]);
 
-  /** Stamp a soft disc, so strokes have the feathered edge enamel actually has. */
+  /**
+   * Stamp a disc: solid to the edge, with a pixel of softness on the rim so it
+   * does not look like a staircase. Enamel laid on with a brush has a definite
+   * edge, and so does the shadow the spot reads, so a stroke that faded out
+   * across its width was both wrong and harder to aim with.
+   */
   const stamp = (f: Float32Array, cx: number, cy: number): void => {
     const r = brush;
+    const feather = 1.2;
     const x0 = Math.max(0, Math.floor(cx - r));
     const x1 = Math.min(width - 1, Math.ceil(cx + r));
     const y0 = Math.max(0, Math.floor(cy - r));
@@ -104,7 +154,7 @@ export const PaintPad = ({
       for (let x = x0; x <= x1; x++) {
         const d = Math.hypot(x - cx, y - cy);
         if (d > r) continue;
-        const a = Math.min(1, (1 - d / r) * 2.2);
+        const a = d <= r - feather ? 1 : Math.max(0, (r - d) / feather);
         const i = y * width + x;
         f[i] = erasing ? Math.min(f[i]!, 1 - a) : Math.max(f[i]!, a);
       }

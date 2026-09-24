@@ -1,5 +1,13 @@
 export { ControlLane } from './lane.js';
-export { PlateReverb, DEFAULT_PLATE, type PlateOptions } from './reverb.js';
+export {
+  PlateReverb,
+  DEFAULT_PLATE,
+  DEFAULT_ROOM,
+  reverbOptions,
+  type PlateOptions,
+  type ReverbSpace,
+} from './reverb.js';
+export { Echo, DEFAULT_ECHO, echoSeconds, ECHO_MIN_S, ECHO_MAX_S, type EchoOptions } from './echo.js';
 export {
   NEUME_WEIGHTS,
   NEUME_DIGITS,
@@ -50,9 +58,22 @@ export {
   Machine,
   FAITHFUL,
   type ScanWindow,
+  type VibratoMode,
+  type Unison,
+  MAX_UNISON_VOICES,
+  unisonRatios,
   PITCH_RANGE,
   PITCH_LANE_MAX_HZ,
   TIMBRE_COUNT,
+  NOTE_ROWS,
+  OCTAVE_ROWS,
+  LOWEST_OCTAVE,
+  DEFAULT_OCTAVE,
+  rowValue,
+  valueRow,
+  midiToHz,
+  notesToMidi,
+  type PitchMode,
   type Fidelity,
   type LaneName,
   type MachineOptions,

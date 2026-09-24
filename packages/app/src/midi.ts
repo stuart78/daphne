@@ -9,7 +9,7 @@
 
 import { importMidi, type MidiImport, type PerformOptions } from '@oramics/midi';
 
-import { LANE_DEFS, LANE_SAMPLES, makeAllLanes, type LaneMap } from './lanes.js';
+import { LANE_DEFS, LANE_SAMPLES, makeAllLanes, roleFor, type LaneMap } from './lanes.js';
 
 export interface MidiResult {
   lanes: LaneMap;
@@ -51,14 +51,22 @@ const describe = (result: MidiImport): string => {
   if (result.parts > 1) parts.push(`${result.parts} parts across ${Math.min(result.parts, 4)} timbres`);
   if (result.rate !== 1) parts.push(`${result.fileDuration.toFixed(0)} s fitted, speed ${result.rate.toFixed(2)}x`);
   if (result.masked > 0) parts.push(`${result.masked} notes dropped under the top line`);
-  if (result.outOfRange > 0) parts.push(`${result.outOfRange} above 1000 Hz`);
+  if (result.outOfRange > 0) {
+    parts.push(
+      'NOTE' in result.lanes
+        ? `${result.outOfRange} notes outside octaves 1 to 8`
+        : `${result.outOfRange} notes above 1000 Hz`,
+    );
+  }
   return parts.join(', ');
 };
 
 export const toSession = (result: MidiImport): MidiResult => {
   const lanes = makeAllLanes();
+  const layout = 'NOTE' in result.lanes ? 'TONE' : 'FULL';
   for (const def of LANE_DEFS) {
-    const raw = result.lanes[def.role];
+    const role = roleFor(def, layout);
+    const raw = role ? result.lanes[role] : undefined;
     if (!raw) continue;
     const values = new Float32Array(LANE_SAMPLES);
     for (let i = 0; i < LANE_SAMPLES; i++) {

@@ -15,6 +15,7 @@
 import {
   FIELD_X_MM,
   TIME_FIELD_WIDTH_MM,
+  type Layout,
   machineBands,
   sheetFurniture,
   slidePanels,
@@ -382,9 +383,10 @@ export const traceDrift = (
   toImage: Matrix3,
   slices = 20,
   searchMm = 1.2,
+  layout: Layout = 'FULL',
 ): Float32Array => {
   const rails: number[] = [];
-  for (const band of machineBands()) {
+  for (const band of machineBands(layout)) {
     rails.push(band.rect.y, band.rect.y + band.rect.h);
   }
 
@@ -513,6 +515,8 @@ export interface SheetContents {
 }
 
 export interface ContentsOptions extends ExtractOptions {
+  /** Which bands the sheet carries. The QR says; FULL when it could not be read. */
+  layout?: Layout;
   /** Samples per lane. */
   laneColumns?: number;
   /** Size of the opacity field read out of each timbre panel. */
@@ -527,16 +531,17 @@ export const readSheet = (
   toImage: Matrix3,
   opts: ContentsOptions = {},
 ): SheetContents => {
-  const furniture = sheetFurniture();
+  const layout = opts.layout ?? 'FULL';
+  const furniture = sheetFurniture(layout);
   const laneColumns = opts.laneColumns ?? 3000;
   const perMm = opts.cropPixelsPerMm ?? 4;
 
-  const drift = traceDrift(ink, toImage);
+  const drift = traceDrift(ink, toImage, undefined, undefined, layout);
 
   const lanes: Record<string, Float32Array> = {};
   const crops: Record<string, Rectified> = {};
   const coverage: Record<string, number> = {};
-  for (const band of machineBands()) {
+  for (const band of machineBands(layout)) {
     crops[band.role] = rectify(ink.image, toImage, band.rect, perMm);
     const values = readRegion(ink, toImage, band.rect, furniture, {
       ...opts,

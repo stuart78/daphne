@@ -30,12 +30,14 @@
  *   "slides": [
  *     { "width": 512, "height": 256, "layout": "row-major-u8", "opacity": "<base64>" }
  *   ],
- *   "settings": { "globalSpeed": 1, "vibratoCents": 50, "fidelity": {} }
+ *   "settings": { "globalSpeed": 1, "vibratoCents": 50, "fidelity": {}, ... }
  * }
  * ```
  */
 
-import type { Fidelity } from '@oramics/engine';
+import type { Fidelity, PitchMode, ReverbSpace, Unison, VibratoMode } from '@oramics/engine';
+
+import type { MarkMode } from './music.js';
 
 import { LANE_DEFS, LANE_SAMPLES, SLIDE_HEIGHT, SLIDE_WIDTH, makeAllLanes, type LaneMap } from './lanes.js';
 
@@ -50,6 +52,26 @@ export interface SessionSettings {
   globalSpeed: number;
   vibratoCents: number;
   fidelity: Fidelity;
+  /** Pitch as one Hertz line or as a note and an octave. */
+  pitchMode: PitchMode;
+  /** How note and octave marks are read. */
+  markMode: MarkMode;
+  /** Root of the key as a row, 0 for C. */
+  root: number;
+  /** Scale id, see music.ts. */
+  scale: string;
+  /** Detuned voices per timbre. One voice is the machine as built. */
+  unison: Unison[];
+  /** The preset each timbre was set from, '' if painted since. For the label only. */
+  presets: string[];
+  /** Where each timbre sits, -1 left to 1 right. Heard only with Mono off. */
+  pan: number[];
+  /** What the vibrato strip drives: the pitch, or an echo's time. */
+  vibratoMode: VibratoMode;
+  /** How much of the echo goes back round, 0 to 0.95. */
+  echoFeedback: number;
+  /** Where the reverb send goes. */
+  reverbSpace: ReverbSpace;
 }
 
 export interface Session {
@@ -265,6 +287,15 @@ export const decodeSession = (text: string, fallback: SessionSettings): Session 
   const rawSettings = root.settings && typeof root.settings === 'object' ? root.settings : {};
   const settings = { ...fallback, ...(rawSettings as Partial<SessionSettings>) };
   settings.fidelity = { ...fallback.fidelity, ...(settings.fidelity ?? {}) };
+  if (!Array.isArray(settings.unison) || settings.unison.length !== fallback.unison.length) {
+    settings.unison = fallback.unison;
+  }
+  if (!Array.isArray(settings.presets) || settings.presets.length !== fallback.presets.length) {
+    settings.presets = fallback.presets;
+  }
+  if (!Array.isArray(settings.pan) || settings.pan.length !== fallback.pan.length) {
+    settings.pan = fallback.pan;
+  }
 
   return { lanes, slides, settings };
 };

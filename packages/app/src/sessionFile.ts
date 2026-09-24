@@ -43,6 +43,43 @@ export const openSession = async (
   return { session: decodeSession(await file.text(), fallback), path: file.name };
 };
 
+/*
+ * The session kept between launches. The shell writes it into the app's data
+ * folder; a plain browser keeps it in local storage, which can be missing or
+ * full, so every call here fails quietly.
+ */
+const AUTOSAVE_KEY = 'daphne.autosave';
+
+export const readAutosave = async (): Promise<string | null> => {
+  const shell = window.oramics;
+  if (shell) return shell.restore();
+  try {
+    return localStorage.getItem(AUTOSAVE_KEY);
+  } catch {
+    return null;
+  }
+};
+
+export const writeAutosave = (text: string): void => {
+  const shell = window.oramics;
+  if (shell) {
+    shell.autosave(text).catch((err: unknown) => console.warn('autosave failed', err));
+    return;
+  }
+  try {
+    localStorage.setItem(AUTOSAVE_KEY, text);
+  } catch {
+    // Full or blocked: the session still works, it just will not be kept.
+  }
+};
+
+/** Blocking, for the moment the window closes. */
+export const writeAutosaveNow = (text: string): void => {
+  const shell = window.oramics;
+  if (shell) return shell.autosaveNow(text);
+  writeAutosave(text);
+};
+
 /** Ask for an image of a printed sheet. Always the browser picker: the shell has no image dialog. */
 export const pickImage = (): Promise<File | null> => pickFile('image/*');
 

@@ -244,6 +244,16 @@ export const FOOTER_Y_MM = PAGE.heightMm - 6.4; // 209.5
  * where vertical position has to be read precisely rather than gesturally —
  * everything else is a contour between two rails.
  */
+/**
+ * Which set of bands a sheet carries.
+ *
+ *   FULL   pitch as one line, height in Hertz: what the original machine read
+ *   TONE   pitch as a note in twelve rows and an octave in eight below it
+ *
+ * The QR names the layout, so an imported sheet says which way to read it.
+ */
+export type Layout = 'FULL' | 'TONE';
+
 export const MACHINE_LANES: ReadonlyArray<{ role: string; weight: number }> = [
   { role: 'PCH', weight: 3 },
   { role: 'AMP1', weight: 1.6 },
@@ -255,6 +265,33 @@ export const MACHINE_LANES: ReadonlyArray<{ role: string; weight: number }> = [
   { role: 'TRN', weight: 1.1 },
 ];
 
+/**
+ * The note-and-octave sheet.
+ *
+ * Pitch is split in two: twelve note rows, then eight octave rows directly
+ * under them. The note band gets the most room because it has the most rows,
+ * and 2.5 mm a row is the smallest that still takes a pen dot comfortably;
+ * Richards' sensors needed 3 mm, but nothing here has to be optically
+ * separable, since the app snaps to the nearest row.
+ *
+ * Everything else gives a little ground to make space. Reverberation and
+ * transport end up about 8 mm, which is enough for the gestures they take.
+ */
+export const TONAL_LANES: ReadonlyArray<{ role: string; weight: number }> = [
+  { role: 'NOTE', weight: 3.6 },
+  { role: 'OCT', weight: 1.8 },
+  { role: 'AMP1', weight: 1.4 },
+  { role: 'AMP2', weight: 1.4 },
+  { role: 'AMP3', weight: 1.4 },
+  { role: 'AMP4', weight: 1.4 },
+  { role: 'VIB', weight: 1.1 },
+  { role: 'REV', weight: 1.0 },
+  { role: 'TRN', weight: 1.0 },
+];
+
+export const lanesFor = (layout: Layout): ReadonlyArray<{ role: string; weight: number }> =>
+  layout === 'TONE' ? TONAL_LANES : MACHINE_LANES;
+
 export interface Band {
   role: string;
   index: number;
@@ -262,13 +299,14 @@ export interface Band {
 }
 
 /** Lay the bands out down the page, proportional to their weights. */
-export const machineBands = (): Band[] => {
-  const totalWeight = MACHINE_LANES.reduce((s, l) => s + l.weight, 0);
-  const gaps = MACHINE.bandGapMm * (MACHINE_LANES.length - 1);
+export const machineBands = (layout: Layout = 'FULL'): Band[] => {
+  const lanes = lanesFor(layout);
+  const totalWeight = lanes.reduce((s, l) => s + l.weight, 0);
+  const gaps = MACHINE.bandGapMm * (lanes.length - 1);
   const perWeight = (MACHINE.bandsHeightMm - gaps) / totalWeight;
 
   let y = MACHINE_BANDS_Y_MM;
-  return MACHINE_LANES.map((lane, index) => {
+  return lanes.map((lane, index) => {
     const h = lane.weight * perWeight;
     const rect: Rect = { x: FIELD_X_MM, y, w: TIME_FIELD_WIDTH_MM, h };
     y += h + MACHINE.bandGapMm;

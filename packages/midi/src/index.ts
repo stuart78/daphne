@@ -12,6 +12,8 @@
 
 export * from './smf.js';
 export * from './perform.js';
+export * from './write.js';
+export * from './transcribe.js';
 
 import { parseMidi } from './smf.js';
 import { perform, type PerformOptions, type Performance } from './perform.js';

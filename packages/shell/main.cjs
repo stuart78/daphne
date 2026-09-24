@@ -10,7 +10,7 @@
 
 const { app, BrowserWindow, ipcMain, dialog, screen } = require('electron');
 const fs = require('node:fs');
-const { readFile, writeFile } = require('node:fs/promises');
+const { readFile, rename, writeFile } = require('node:fs/promises');
 const path = require('node:path');
 
 const { installMenu } = require('./menu.cjs');
@@ -142,15 +142,76 @@ ipcMain.handle('oramics:open-session', async () => {
   return { path: filePath, text: await readFile(filePath, 'utf8') };
 });
 
-ipcMain.handle('oramics:save-pdf', async (_event, bytes, name) => {
+// Exports: the printable sheet, a bounce of the audio, and MIDI.
+const SAVE_KINDS = {
+  pdf: { title: 'Export sheet', name: 'PDF', extensions: ['pdf'] },
+  wav: { title: 'Export audio', name: 'WAV audio', extensions: ['wav'] },
+  mid: { title: 'Export MIDI', name: 'MIDI', extensions: ['mid'] },
+};
+
+ipcMain.handle('oramics:save-file', async (_event, bytes, name, kind) => {
+  const spec = SAVE_KINDS[kind];
+  if (!spec) throw new Error(`unknown export kind ${kind}`);
   const { canceled, filePath } = await dialog.showSaveDialog(editorWindow ?? undefined, {
-    title: 'Export sheet',
-    defaultPath: name || 'daphne-session.pdf',
-    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    title: spec.title,
+    defaultPath: name || `daphne.${spec.extensions[0]}`,
+    filters: [{ name: spec.name, extensions: spec.extensions }],
   });
   if (canceled || !filePath) return null;
   await writeFile(filePath, Buffer.from(bytes));
   return filePath;
+});
+
+/*
+ * The session as it stands, kept between launches.
+ *
+ * Written a moment after every change, and once more, synchronously, as the
+ * window closes, so quitting mid-stroke loses nothing. Written to a temporary
+ * file and renamed into place, so a crash halfway through a write leaves the
+ * previous copy rather than half of this one.
+ */
+const autosavePath = () => path.join(app.getPath('userData'), 'autosave.daphne');
+
+ipcMain.handle('oramics:autosave', async (_event, text) => {
+  const target = autosavePath();
+  await writeFile(`${target}.tmp`, text, 'utf8');
+  await rename(`${target}.tmp`, target);
+});
+
+ipcMain.on('oramics:autosave-sync', (event, text) => {
+  try {
+    const target = autosavePath();
+    fs.writeFileSync(`${target}.tmp`, text, 'utf8');
+    fs.renameSync(`${target}.tmp`, target);
+  } catch (err) {
+    console.error('autosave failed', err);
+  }
+  event.returnValue = true;
+});
+
+ipcMain.handle('oramics:restore', async () => {
+  try {
+    return await readFile(autosavePath(), 'utf8');
+  } catch {
+    return null;
+  }
+});
+
+/*
+ * The projector's feed.
+ *
+ * Relayed through here rather than over a BroadcastChannel. Pages loaded from
+ * disk have no shared origin to broadcast on, which is why the projector sat
+ * on "waiting" in the packaged app.
+ */
+ipcMain.on('oramics:projector', (_event, message) => {
+  projectorWindow?.webContents.send('oramics:projector', message);
+});
+
+// A projector that opens after the drawing was made has missed every update so
+// far. It says so once it is listening, and the editor sends the lot again.
+ipcMain.on('oramics:projector-hello', () => {
+  editorWindow?.webContents.send('oramics:command', 'projector-ready');
 });
 
 app.whenReady().then(() => {

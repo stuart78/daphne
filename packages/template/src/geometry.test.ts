@@ -24,6 +24,7 @@ import {
   SOLO_INSTRUCTION_Y_MM,
   TEXT_LEFT_MM,
   TIME_FIELD_WIDTH_MM,
+  TONAL_LANES,
   machineBands,
   machineFieldRect,
   qrOuterRect,
@@ -33,8 +34,10 @@ import {
   timeToX,
 } from './geometry.js';
 import {
+  LAYOUT_TONAL,
   decodePayload,
   encodePayload,
+  layoutOf,
   sheetPayload,
   soloPayload,
 } from './payload.js';
@@ -299,4 +302,49 @@ test('every role id is a valid lookup and instructions fit the strip', () => {
 
 test('unknown roles fail loudly', () => {
   assert.throws(() => getRole('NOPE'), /Unknown role/);
+});
+
+// --- the note-and-octave sheet ---------------------------------------------
+
+test('the note-and-octave sheet tiles the same field', () => {
+  const bands = machineBands('TONE');
+  assert.equal(bands.length, TONAL_LANES.length);
+  assert.deepEqual(
+    bands.slice(0, 2).map((b) => b.role),
+    ['NOTE', 'OCT'],
+    'note first, octave directly under it',
+  );
+
+  const region = machineFieldRect();
+  close(bands[0]!.rect.y, region.y);
+  const last = bands[bands.length - 1]!.rect;
+  close(last.y + last.h, region.y + region.h);
+  for (let i = 1; i < bands.length; i++) {
+    const gap = bands[i]!.rect.y - (bands[i - 1]!.rect.y + bands[i - 1]!.rect.h);
+    close(gap, MACHINE.bandGapMm);
+  }
+});
+
+test('note and octave rows are big enough to take a pen dot', () => {
+  // Richards' sensors needed 3 mm. Nothing here has to be optically separable,
+  // since the app snaps to the nearest row, so the floor is what a hand can aim
+  // at rather than what a phototransistor can see.
+  const bands = machineBands('TONE');
+  const note = bands.find((b) => b.role === 'NOTE')!.rect;
+  const octave = bands.find((b) => b.role === 'OCT')!.rect;
+  assert.ok(note.h / 12 >= 2.3, `note rows are ${(note.h / 12).toFixed(2)} mm`);
+  assert.ok(octave.h / 8 >= 1.7, `octave rows are ${(octave.h / 8).toFixed(2)} mm`);
+  for (const band of bands) {
+    assert.ok(band.rect.h >= 8, `${band.role} band is only ${band.rect.h.toFixed(1)} mm tall`);
+  }
+});
+
+test('the sheet says which layout it is', () => {
+  const tonal = sheetPayload('FFFFFFFF', undefined, 'TONE');
+  assert.equal(tonal.role, LAYOUT_TONAL);
+  const back = decodePayload(encodePayload(tonal));
+  assert.equal(layoutOf(back), 'TONE');
+  assert.equal(layoutOf(decodePayload(encodePayload(sheetPayload('FFFFFFFF')))), 'FULL');
+  // A QR that failed to read falls back to the original sheet.
+  assert.equal(layoutOf(null), 'FULL');
 });

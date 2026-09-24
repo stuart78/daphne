@@ -7,7 +7,7 @@
  * fight with: the traffic is rare and one-directional.
  */
 
-import type { Fidelity, LaneName } from '@oramics/engine';
+import type { Fidelity, LaneName, PitchMode, ReverbSpace, Unison, VibratoMode } from '@oramics/engine';
 
 export type EngineMessage =
   | { type: 'lane'; name: LaneName; data: ArrayBuffer; durationS: number }
@@ -16,10 +16,16 @@ export type EngineMessage =
   /** A painted slide, already blurred for the spot — see Slide.preblurred. */
   | { type: 'slide'; index: number; field: ArrayBuffer; width: number; height: number }
   | { type: 'scanWindow'; index: number; low: number; high: number }
+  | { type: 'unison'; index: number; unison: Unison }
+  | { type: 'pan'; index: number; value: number }
+  | { type: 'vibratoMode'; mode: VibratoMode }
+  | { type: 'echoFeedback'; value: number }
+  | { type: 'reverbSpace'; space: ReverbSpace }
   | { type: 'fidelity'; patch: Partial<Fidelity> }
   | { type: 'globalSpeed'; value: number }
   | { type: 'laneSpeed'; name: LaneName; value: number }
   | { type: 'vibratoDepth'; cents: number }
+  | { type: 'pitchMode'; mode: PitchMode }
   | { type: 'transport'; playing: boolean; rewind?: boolean };
 
 export interface MeterMessage {
@@ -33,6 +39,7 @@ export interface MeterMessage {
 /** The order `MeterMessage.positions` arrives in. */
 export const LANE_ORDER: LaneName[] = [
   'pitch',
+  'octave',
   'vibrato',
   'reverb',
   'transport',

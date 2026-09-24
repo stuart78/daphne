@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { ControlLane } from './lane.js';
 import { Machine } from './machine.js';
-import { DEFAULT_PLATE, PlateReverb } from './reverb.js';
+import { DEFAULT_PLATE, DEFAULT_ROOM, PlateReverb } from './reverb.js';
 import { Slide } from './slide.js';
 
 const SR = 48_000;
@@ -184,4 +184,24 @@ test('the transport strip warps its own time axis', () => {
     m.lanes.transport.position < 4,
     'the transport head should never reach the end of a strip that stops it',
   );
+});
+
+test('a room arrives sooner and dies away faster than the plate', () => {
+  const plate = new PlateReverb(SR, DEFAULT_PLATE);
+  const room = new PlateReverb(SR, DEFAULT_ROOM);
+  const early = (r: PlateReverb): number => {
+    // The first 30 ms: a plate has nothing here yet, a room has its first bounces.
+    let sum = 0;
+    for (let i = 0; i < SR * 0.03; i++) sum += Math.abs(r.process(i === 0 ? 1 : 0));
+    return sum;
+  };
+  const rest = (r: PlateReverb, seconds: number): number => {
+    let sum = 0;
+    for (let i = 0; i < SR * seconds; i++) sum += Math.abs(r.process(0));
+    return sum;
+  };
+  const roomEarly = early(room);
+  const plateEarly = early(plate);
+  assert.ok(roomEarly > plateEarly * 2, `room ${roomEarly}, plate ${plateEarly}`);
+  assert.ok(rest(room, 1.5) < rest(plate, 1.5), 'the room tail should be the shorter one');
 });

@@ -1,24 +1,65 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type JSX } from 'react';
 
-import { randomSlideField, type Fidelity } from '@oramics/engine';
+import {
+  FAITHFUL,
+  NOTE_ROWS,
+  OCTAVE_ROWS,
+  LOWEST_OCTAVE,
+  randomSlideField,
+  type Fidelity,
+  type PitchMode,
+  type ReverbSpace,
+  type Unison,
+  type VibratoMode,
+  ECHO_MAX_S,
+  ECHO_MIN_S,
+  echoSeconds,
+  unisonRatios,
+} from '@oramics/engine';
+import type { Layout } from '@oramics/template';
 
 import { AudioClient } from './audio/client.js';
 import { LANE_ORDER } from './audio/protocol.js';
+import type { BounceInput } from './bounce.js';
 import { exportBlankPdf, exportSessionPdf } from './export.js';
-import type { SessionSettings } from './session.js';
+import { openEditorLink, type ProjectorMessage } from './projectorLink.js';
+import { exportMidi, exportWav } from './render.js';
+import { decodeSession, encodeSession, type Session, type SessionSettings } from './session.js';
 import { readMidiFile } from './midi.js';
+import {
+  CHROMATIC,
+  NOTE_NAMES,
+  SCALES,
+  SHARP_ROWS,
+  inScale,
+  readRows,
+  snapNote,
+  type MarkMode,
+  type Tuning,
+} from './music.js';
 import { isBlank, scanImageFile, toBitmaps } from './scan.js';
-import { openSession, pickImage, pickMidi, saveSession } from './sessionFile.js';
+import {
+  openSession,
+  pickImage,
+  pickMidi,
+  readAutosave,
+  saveSession,
+  writeAutosave,
+  writeAutosaveNow,
+} from './sessionFile.js';
 import type { ShellCommand } from './shell.js';
 import {
   LANE_DEFS,
   SLIDE_HEIGHT,
   SLIDE_WIDTH,
   makeAllLanes,
+  paintSlide,
   type LaneMap,
   type LaneTrack,
+  type SlideShape,
 } from './lanes.js';
 import { DrawPad } from './ui/DrawPad.js';
+import { MenuButton } from './ui/MenuButton.js';
 import { PaintPad } from './ui/PaintPad.js';
 import { Ruler } from './ui/Ruler.js';
 import { applyTheme, initialTheme, type Theme } from './ui/theme.js';
@@ -39,30 +80,108 @@ const DURATION_S = 30;
  */
 const SLIDE_PUSH_MS = 90;
 
+/** Quiet time after a change before the session is written for next launch. */
+const AUTOSAVE_MS = 1000;
+
 /**
- * Broadcast to the projector window; it holds no state of its own.
- *
- * Split in two because the head positions arrive about thirty times a second
- * and the lane drawings are tens of kilobytes. Sending both together meant
- * structured-cloning every lane on every meter tick.
+ * Guide lines on the delay lane, at times worth aiming for. The lane is
+ * exponential in time, so these are not evenly spaced.
  */
-export type ProjectorMessage =
-  | { kind: 'lanes'; lanes: Record<string, LaneTrack> }
-  | { kind: 'transport'; heads: Record<string, number>; hz: number; playing: boolean };
+const ECHO_GUIDE_S = [0.125, 0.25, 0.5, 1];
+const ECHO_GUIDES = ECHO_GUIDE_S.map(
+  (t) => Math.log(t / ECHO_MIN_S) / Math.log(ECHO_MAX_S / ECHO_MIN_S),
+);
+
+/** A pan setting in words, for the tooltip. */
+const panLabel = (p: number): string =>
+  Math.abs(p) < 0.025 ? 'centre' : `${Math.round(Math.abs(p) * 100)}% ${p < 0 ? 'left' : 'right'}`;
+
+/** How far apart the detuned echoes are drawn on a slide, per cent of detune. */
+const GHOST_COLUMNS_PER_CENT = 1.4;
+
+/** One voice per timbre: the machine as built. */
+const NO_UNISON: Unison = { voices: 1, cents: 0 };
+
+/**
+ * The waveform presets on each timbre. Sine, saw and square paint the slide.
+ * Supersaw paints a saw and stacks seven detuned copies of it; detune leaves
+ * the painting alone and adds three. Neither of those two is anything the
+ * machine could do: it had one spot per slide.
+ */
+const PRESETS: { id: string; label: string; shape: SlideShape | null; unison: Unison }[] = [
+  { id: 'sine', label: 'Sine', shape: 'sine', unison: NO_UNISON },
+  { id: 'saw', label: 'Saw', shape: 'saw', unison: NO_UNISON },
+  { id: 'square', label: 'Square', shape: 'square', unison: NO_UNISON },
+  { id: 'supersaw', label: 'Supersaw', shape: 'saw', unison: { voices: 7, cents: 25 } },
+  { id: 'detune', label: 'Detune', shape: null, unison: { voices: 3, cents: 12 } },
+  // Clear glass. The spot has nothing to ride, so the timbre goes quiet: a way
+  // to take a voice out without drawing its amplitude down to nothing.
+  { id: 'blank', label: 'Blank', shape: 'blank', unison: NO_UNISON },
+];
+
+/**
+ * A fresh set of slides. Randomised rather than four identical sines, so a new
+ * session already sounds like something.
+ */
+const freshSlides = (): Float32Array[] =>
+  Array.from(
+    { length: 4 },
+    () =>
+      randomSlideField(Math.floor(Math.random() * 2 ** 31), { roundness: 0.5, wildness: 0.4 })
+        .field,
+  );
+
+/** Everything a session carries, as the app opens: the machine as built. */
+const DEFAULT_SETTINGS: SessionSettings = {
+  globalSpeed: 1,
+  vibratoCents: 50,
+  fidelity: FAITHFUL,
+  pitchMode: 'hertz',
+  markMode: 'lines',
+  root: 0,
+  scale: 'chromatic',
+  unison: Array.from({ length: 4 }, () => NO_UNISON),
+  presets: ['', '', '', ''],
+  pan: [0, 0, 0, 0],
+  vibratoMode: 'vibrato',
+  echoFeedback: 0.35,
+  reverbSpace: 'plate',
+};
+
+/** Lanes the engine hears through the note reading rather than as drawn. */
+const PITCH_LANES = new Set<keyof LaneMap>(['pitch', 'octave']);
+
+/** Octave rows, bottom first, named the way a keyboard names them. */
+const OCTAVE_LABELS = Array.from({ length: OCTAVE_ROWS }, (_, i) => String(i + LOWEST_OCTAVE));
 
 export const App = (): JSX.Element => {
   const [lanes, setLanes] = useState<LaneMap>(makeAllLanes);
-  // Start on randomised slides rather than four identical sines: a fresh
-  // session should already sound like something.
-  const [slides, setSlides] = useState<Float32Array[]>(() =>
-    Array.from(
-      { length: 4 },
-      () =>
-        randomSlideField(Math.floor(Math.random() * 2 ** 31), {
-          roundness: 0.5,
-          wildness: 0.4,
-        }).field,
-    ),
+  const [slides, setSlides] = useState<Float32Array[]>(freshSlides);
+
+  const [unison, setUnison] = useState<Unison[]>(DEFAULT_SETTINGS.unison);
+  /** Where each timbre sits, -1 left to 1 right. Heard only with Mono off. */
+  const [pan, setPan] = useState<number[]>(DEFAULT_SETTINGS.pan);
+  /** What the vibrato strip drives, and where the reverb send goes. */
+  const [vibratoMode, setVibratoMode] = useState<VibratoMode>(DEFAULT_SETTINGS.vibratoMode);
+  const [echoFeedback, setEchoFeedback] = useState(DEFAULT_SETTINGS.echoFeedback);
+  const [reverbSpace, setReverbSpace] = useState<ReverbSpace>(DEFAULT_SETTINGS.reverbSpace);
+  const delay = vibratoMode === 'delay';
+  /** The preset each timbre was last set from, or '' once it has been painted over. */
+  const [presets, setPresets] = useState<string[]>(DEFAULT_SETTINGS.presets);
+  const setPreset = (index: number, id: string): void =>
+    setPresets((prev) => (prev[index] === id ? prev : prev.map((p, i) => (i === index ? id : p))));
+
+  /*
+   * The detuned copies as echoes on the slide, in columns either side. Scaled so
+   * a supersaw's spread reads at a glance without smearing the stroke into a
+   * block. Memoised: a new array would repaint every slide on every render.
+   */
+  const ghosts = useMemo(
+    () =>
+      unison.map((u) =>
+        unisonRatios(u).map((r) => Math.round(1200 * Math.log2(r) * GHOST_COLUMNS_PER_CENT)),
+      ),
+    [unison],
   );
 
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -78,17 +197,9 @@ export const App = (): JSX.Element => {
   /** How eventful generated slides are — gaps, stacked ribbons, weight changes. */
   const [wildness, setWildness] = useState(0.4);
   const [playing, setPlaying] = useState(false);
-  const [globalSpeed, setGlobalSpeed] = useState(1);
-  const [vibratoCents, setVibratoCents] = useState(50);
-  const [fidelity, setFidelity] = useState<Fidelity>({
-    integerHzPitch: true,
-    linearPitchScale: true,
-    relayLag: true,
-    opticalAmplitude: true,
-    monoSum: true,
-    servoScanner: true,
-    transportLane: true,
-  });
+  const [globalSpeed, setGlobalSpeed] = useState(DEFAULT_SETTINGS.globalSpeed);
+  const [vibratoCents, setVibratoCents] = useState(DEFAULT_SETTINGS.vibratoCents);
+  const [fidelity, setFidelity] = useState<Fidelity>(DEFAULT_SETTINGS.fidelity);
   const [heads, setHeads] = useState<Record<string, number>>({});
   const [hz, setHz] = useState(0);
   const [status, setStatus] = useState('');
@@ -103,17 +214,62 @@ export const App = (): JSX.Element => {
   const [paper, setPaper] = useState<Record<string, ImageBitmap> | null>(null);
   const [showReading, setShowReading] = useState(true);
 
+  /*
+   * How pitch is drawn.
+   *
+   * Hertz is the original machine: one line, height is the frequency. Notes
+   * splits it into a note band and an octave band, the shape of Oram's 1976
+   * design. The engine behind both is the same machine; only the reading of the
+   * marks changes.
+   */
+  const [pitchMode, setPitchMode] = useState<PitchMode>(DEFAULT_SETTINGS.pitchMode);
+  const [markMode, setMarkMode] = useState<MarkMode>(DEFAULT_SETTINGS.markMode);
+  const [tuning, setTuning] = useState<Tuning>(CHROMATIC);
+  const layout: Layout = pitchMode === 'notes' ? 'TONE' : 'FULL';
+
+  /*
+   * What the note and octave marks are read as.
+   *
+   * Computed here, once, and used twice: sent to the engine as the notes to
+   * play, and drawn over the marks so what you see is what plays.
+   */
+  const tonal = useMemo(() => {
+    if (pitchMode !== 'notes') return null;
+    return {
+      note: readRows(lanes.pitch.values, lanes.pitch.strokes, NOTE_ROWS, markMode, (r) =>
+        snapNote(r, tuning),
+      ),
+      octave: readRows(lanes.octave.values, lanes.octave.strokes, OCTAVE_ROWS, markMode),
+    };
+  }, [pitchMode, markMode, tuning, lanes.pitch, lanes.octave]);
+
   const client = useRef<AudioClient>(null);
   if (client.current === null) client.current = new AudioClient();
 
-  const channel = useRef<BroadcastChannel>(null);
-  if (channel.current === null) channel.current = new BroadcastChannel('oramics');
+  /** Every lane but pitch and octave, which the reading effect sends. */
+  const sendControlLanes = (next: LaneMap): void => {
+    for (const def of LANE_DEFS) {
+      if (!PITCH_LANES.has(def.name)) client.current!.sendLane(def.name, next[def.name].values, DURATION_S);
+    }
+  };
+
+  /** Resend everything to the projector. Rewritten each render, see below. */
+  const postAll = useRef<() => void>(() => {});
+  const link = useRef<ReturnType<typeof openEditorLink>>(null);
+  // Opened in an effect, not during render, so a remount gets a fresh one
+  // rather than posting into the one the unmount closed.
+  useEffect(() => {
+    const opened = openEditorLink(() => postAll.current());
+    link.current = opened;
+    return () => {
+      opened.close();
+      link.current = null;
+    };
+  }, []);
 
   // Push every lane once the worklet exists; the client queues until then.
   useEffect(() => {
-    for (const def of LANE_DEFS) {
-      client.current!.sendLane(def.name, lanes[def.name].values, DURATION_S);
-    }
+    sendControlLanes(lanes);
     slides.forEach((f, i) => client.current!.sendSlide(i, f));
     // Deliberately once on mount — later edits push individually.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -132,13 +288,30 @@ export const App = (): JSX.Element => {
   }, []);
 
   // The projector is a pure view. Drawings go only when they change...
+  const lanesMessage = (): ProjectorMessage => ({
+    kind: 'lanes',
+    lanes,
+    pitchMode,
+    reading: tonal ? { pitch: tonal.note, octave: tonal.octave } : null,
+    shaded: Array.from({ length: NOTE_ROWS }, (_, r) => r).filter((r) =>
+      tuning.scale === 'chromatic' ? SHARP_ROWS.has(r) : !inScale(r, tuning),
+    ),
+  });
+  const transportMessage = (): ProjectorMessage => ({ kind: 'transport', heads, hz, playing });
+  postAll.current = () => {
+    link.current?.post(lanesMessage());
+    link.current?.post(transportMessage());
+  };
+
   useEffect(() => {
-    channel.current!.postMessage({ kind: 'lanes', lanes } satisfies ProjectorMessage);
-  }, [lanes]);
+    link.current?.post(lanesMessage());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lanes, tonal, pitchMode, tuning]);
 
   // ...and the read heads go at meter rate, carrying nothing bulky.
   useEffect(() => {
-    channel.current!.postMessage({ kind: 'transport', heads, hz, playing } satisfies ProjectorMessage);
+    link.current?.post(transportMessage());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heads, hz, playing]);
 
   /*
@@ -158,8 +331,24 @@ export const App = (): JSX.Element => {
 
   const updateLane = useCallback((name: keyof LaneMap, track: LaneTrack) => {
     setLanes((prev) => ({ ...prev, [name]: track }));
-    client.current!.sendLane(name, track.values, DURATION_S);
+    // Pitch and octave go through the reading first, in the effect below.
+    if (!PITCH_LANES.has(name)) client.current!.sendLane(name, track.values, DURATION_S);
   }, []);
+
+  /*
+   * The pitch lanes, as the engine should hear them.
+   *
+   * In Hertz mode that is the line as drawn. In Notes mode it is the reading:
+   * one chosen row per column, snapped to the key, with dots already turned
+   * into notes that hold. Sending the raw marks there would make the engine
+   * play every wobble of a line as a different note.
+   */
+  useEffect(() => {
+    const c = client.current!;
+    c.send({ type: 'pitchMode', mode: pitchMode });
+    c.sendLane('pitch', tonal ? tonal.note : lanes.pitch.values, DURATION_S);
+    c.sendLane('octave', tonal ? tonal.octave : lanes.octave.values, DURATION_S);
+  }, [pitchMode, tonal, lanes.pitch, lanes.octave]);
 
   const pendingSlides = useRef(new Map<number, Float32Array>());
   const slideTimer = useRef<number | null>(null);
@@ -199,8 +388,54 @@ export const App = (): JSX.Element => {
     [character, wildness, updateSlide],
   );
 
+  // Detuned voices go to the engine whenever they change, including at start.
+  useEffect(() => {
+    unison.forEach((u, index) => client.current!.send({ type: 'unison', index, unison: u }));
+  }, [unison]);
+
+  useEffect(() => {
+    pan.forEach((value, index) => client.current!.send({ type: 'pan', index, value }));
+  }, [pan]);
+
+  useEffect(() => {
+    client.current!.send({ type: 'vibratoMode', mode: vibratoMode });
+  }, [vibratoMode]);
+
+  useEffect(() => {
+    client.current!.send({ type: 'echoFeedback', value: echoFeedback });
+  }, [echoFeedback]);
+
+  useEffect(() => {
+    client.current!.send({ type: 'reverbSpace', space: reverbSpace });
+  }, [reverbSpace]);
+
+  /**
+   * Move a timbre left or right. Pan means nothing in mono, and the machine was
+   * mono, so reaching for one turns Mono off rather than leaving the control
+   * apparently broken.
+   */
+  const panTimbre = (index: number, value: number): void => {
+    setPan((prev) => prev.map((p, i) => (i === index ? value : p)));
+    if (fidelity.monoSum) {
+      patchFidelity({ monoSum: false });
+      setStatus('Mono is off so the pan can be heard. Turn it back on to hear the machine as built.');
+    }
+  };
+
+  const setTimbreUnison = (index: number, next: Unison): void =>
+    setUnison((prev) => prev.map((u, i) => (i === index ? next : u)));
+
+  const applyPreset = (index: number, id: string): void => {
+    const preset = PRESETS.find((p) => p.id === id);
+    if (!preset) return;
+    if (preset.shape) updateSlide(index, paintSlide(preset.shape));
+    setTimbreUnison(index, preset.unison);
+    setPreset(index, preset.id);
+  };
+
   const randomiseAll = useCallback(() => {
     for (let i = 0; i < 4; i++) randomiseSlide(i);
+    setPresets(['', '', '', '']);
   }, [randomiseSlide]);
 
   const togglePlay = async (): Promise<void> => {
@@ -223,7 +458,7 @@ export const App = (): JSX.Element => {
   const onExport = async (): Promise<void> => {
     setStatus('building PDF…');
     try {
-      const path = await exportSessionPdf({ lanes, slides });
+      const path = await exportSessionPdf({ lanes, slides, layout });
       setStatus(path ? `saved ${path}` : 'export cancelled');
     } catch (err) {
       setStatus(`export failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -234,14 +469,28 @@ export const App = (): JSX.Element => {
   const onBlank = async (): Promise<void> => {
     setStatus('building the sheet…');
     try {
-      const path = await exportBlankPdf();
+      const path = await exportBlankPdf(undefined, layout);
       setStatus(path ? `saved ${path}` : 'cancelled');
     } catch (err) {
       setStatus(`failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
-  const settings = (): SessionSettings => ({ globalSpeed, vibratoCents, fidelity });
+  const settings = (): SessionSettings => ({
+    globalSpeed,
+    vibratoCents,
+    fidelity,
+    pitchMode,
+    markMode,
+    root: tuning.root,
+    scale: tuning.scale,
+    unison,
+    presets,
+    pan,
+    vibratoMode,
+    echoFeedback,
+    reverbSpace,
+  });
 
   const onSave = async (): Promise<void> => {
     try {
@@ -271,10 +520,12 @@ export const App = (): JSX.Element => {
       setView(FULL);
       setPaper(await toBitmaps(scan.paper));
       setShowReading(true);
+      // The sheet names its own layout, so a note-and-octave sheet switches the
+      // app to notes without anyone having to remember to.
+      setPitchMode(scan.layout === 'TONE' ? 'notes' : 'hertz');
 
-      const client_ = client.current!;
-      for (const def of LANE_DEFS) client_.sendLane(def.name, scan.lanes[def.name].values, DURATION_S);
-      scan.slides.forEach((field, i) => client_.sendSlide(i, field));
+      sendControlLanes(scan.lanes);
+      scan.slides.forEach((field, i) => client.current!.sendSlide(i, field));
 
       const drawn = Object.entries(scan.coverage)
         .filter(([, c]) => c >= 0.01)
@@ -304,15 +555,16 @@ export const App = (): JSX.Element => {
 
     setStatus('reading the file…');
     try {
-      const midi = await readMidiFile(file);
+      // In Notes mode a MIDI file lands as notes and octaves, which is what it
+      // is. In Hertz mode it lands as a frequency line, as before.
+      const midi = await readMidiFile(file, { pitch: pitchMode });
       setLanes(midi.lanes);
       setPaper(null);
       setView(FULL);
       setGlobalSpeed(midi.rate);
 
-      const client_ = client.current!;
-      for (const def of LANE_DEFS) client_.sendLane(def.name, midi.lanes[def.name].values, DURATION_S);
-      client_.send({ type: 'globalSpeed', value: midi.rate });
+      sendControlLanes(midi.lanes);
+      client.current!.send({ type: 'globalSpeed', value: midi.rate });
 
       setStatus(`${file.name}: ${midi.summary}`);
     } catch (err) {
@@ -320,33 +572,158 @@ export const App = (): JSX.Element => {
     }
   };
 
+  /**
+   * Load a whole session: from a file, or from the autosave at launch.
+   *
+   * Pushes the lot to the engine. Nothing else does: the individual editors
+   * send their own changes, and none of them fired here. The pitch lanes follow
+   * through their own effect once the mode has landed.
+   */
+  const applySession = (session: Session): void => {
+    setLanes(session.lanes);
+    setSlides(session.slides);
+    // A saved performance is not that sheet any more.
+    setPaper(null);
+    setGlobalSpeed(session.settings.globalSpeed);
+    setVibratoCents(session.settings.vibratoCents);
+    setFidelity(session.settings.fidelity);
+    setPitchMode(session.settings.pitchMode);
+    setMarkMode(session.settings.markMode);
+    setTuning({ root: session.settings.root, scale: session.settings.scale });
+    setUnison(session.settings.unison);
+    setPresets(session.settings.presets);
+    setPan(session.settings.pan);
+    setVibratoMode(session.settings.vibratoMode);
+    setEchoFeedback(session.settings.echoFeedback);
+    setReverbSpace(session.settings.reverbSpace);
+    setView(FULL);
+
+    const client_ = client.current!;
+    sendControlLanes(session.lanes);
+    session.slides.forEach((field, i) => client_.sendSlide(i, field));
+    client_.send({ type: 'globalSpeed', value: session.settings.globalSpeed });
+    client_.send({ type: 'vibratoDepth', cents: session.settings.vibratoCents });
+    client_.send({ type: 'fidelity', patch: session.settings.fidelity });
+  };
+
   const onOpen = async (): Promise<void> => {
     try {
       const opened = await openSession(settings());
       if (!opened) return setStatus('open cancelled');
-
-      const { session, path } = opened;
-      setLanes(session.lanes);
-      setSlides(session.slides);
-      // A saved performance is not that sheet any more.
-      setPaper(null);
-      setGlobalSpeed(session.settings.globalSpeed);
-      setVibratoCents(session.settings.vibratoCents);
-      setFidelity(session.settings.fidelity);
-      setView(FULL);
-
-      // Push the lot to the engine. Nothing else does: the individual editors
-      // send their own changes, and none of them fired here.
-      const client_ = client.current!;
-      for (const def of LANE_DEFS) client_.sendLane(def.name, session.lanes[def.name].values, DURATION_S);
-      session.slides.forEach((field, i) => client_.sendSlide(i, field));
-      client_.send({ type: 'globalSpeed', value: session.settings.globalSpeed });
-      client_.send({ type: 'vibratoDepth', cents: session.settings.vibratoCents });
-      client_.send({ type: 'fidelity', patch: session.settings.fidelity });
-
-      setStatus(`opened ${path}`);
+      applySession(opened.session);
+      setStatus(`opened ${opened.path}`);
     } catch (err) {
       setStatus(`open failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  /**
+   * Start again: blank strips, fresh slides, every setting back to the machine
+   * as built. There is no undo, and a session can be half an afternoon's work,
+   * so it asks first.
+   */
+  const onClear = (): void => {
+    if (!window.confirm('Clear the sheet and start again? This cannot be undone.')) return;
+    applySession({ lanes: makeAllLanes(), slides: freshSlides(), settings: DEFAULT_SETTINGS });
+    // Back to the top as well, or the heads carry on from wherever they were.
+    client.current!.send({ type: 'transport', playing, rewind: true });
+    setStatus('cleared');
+  };
+
+  /*
+   * Keep the session between launches.
+   *
+   * Restored once at start, then written a second after the last change and
+   * again as the window closes. Nothing is written until the restore has
+   * finished, or a fresh blank session would overwrite the one being restored.
+   */
+  const [restored, setRestored] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const text = await readAutosave();
+        if (text && !cancelled) applySession(decodeSession(text, settings()));
+      } catch (err) {
+        // A damaged autosave should not stop the app opening.
+        console.warn('could not restore the last session', err);
+      } finally {
+        if (!cancelled) setRestored(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const current = useRef<() => string>(() => '');
+  current.current = () => encodeSession({ lanes, slides, settings: settings() });
+
+  useEffect(() => {
+    if (!restored) return;
+    const timer = window.setTimeout(() => writeAutosave(current.current()), AUTOSAVE_MS);
+    return () => window.clearTimeout(timer);
+  }, [restored, lanes, slides, globalSpeed, vibratoCents, fidelity, pitchMode, markMode, tuning, unison, presets, pan, vibratoMode, echoFeedback, reverbSpace]);
+
+  useEffect(() => {
+    if (!restored) return;
+    const onClose = (): void => writeAutosaveNow(current.current());
+    window.addEventListener('beforeunload', onClose);
+    return () => window.removeEventListener('beforeunload', onClose);
+  }, [restored]);
+
+  /** What the offline render needs: the lanes as the engine hears them, and the settings. */
+  const bounceInput = (): BounceInput => ({
+    lanes: Object.fromEntries(
+      LANE_DEFS.map((def) => [
+        def.name,
+        tonal && def.name === 'pitch'
+          ? tonal.note
+          : tonal && def.name === 'octave'
+            ? tonal.octave
+            : lanes[def.name].values,
+      ]),
+    ),
+    slides,
+    globalSpeed,
+    vibratoCents,
+    fidelity,
+    pitchMode,
+    unison,
+    pan,
+    vibratoMode,
+    echoFeedback,
+    reverbSpace,
+    durationS: DURATION_S,
+  });
+
+  const progress = (what: string) => (fraction: number) =>
+    setStatus(`${what} ${Math.round(fraction * 100)}%`);
+
+  const onExportWav = async (): Promise<void> => {
+    setStatus('rendering…');
+    try {
+      const { path, truncated } = await exportWav(bounceInput(), progress('rendering'));
+      setStatus(
+        !path
+          ? 'cancelled'
+          : truncated
+            ? `saved ${path}. The transport strip stopped the sheet, so it was cut at ten minutes`
+            : `saved ${path}`,
+      );
+    } catch (err) {
+      setStatus(`render failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const onExportMidi = async (): Promise<void> => {
+    setStatus('rendering…');
+    try {
+      const { path, notes } = await exportMidi(bounceInput(), progress('rendering'));
+      setStatus(path ? `saved ${path}: ${notes} notes` : 'cancelled');
+    } catch (err) {
+      setStatus(`MIDI export failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -370,9 +747,41 @@ export const App = (): JSX.Element => {
     'zoom-out': () => setView((v) => zoomAt(v, 0.5, 2)),
     'zoom-fit': () => setView(FULL),
     theme: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
+    'pitch-mode': () => setPitchMode((m) => (m === 'hertz' ? 'notes' : 'hertz')),
+    'mark-mode': () => setMarkMode((m) => (m === 'dots' ? 'lines' : 'dots')),
+    'play-stop': () => void togglePlay(),
+    'export-wav': () => void onExportWav(),
+    'export-midi': () => void onExportMidi(),
+    'projector-ready': () => postAll.current(),
+    clear: () => onClear(),
   };
 
   useEffect(() => window.oramics?.onCommand((command) => commands.current[command]?.()), []);
+
+  /*
+   * Space plays and stops.
+   *
+   * Handled here rather than as a menu accelerator, which would take the space
+   * bar away from the key and scale pickers while they are open. Anything that
+   * takes typing keeps it; everything else hands it over, including a focused
+   * button, which would otherwise be pressed again by the same key.
+   */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.code !== 'Space' || event.repeat || event.metaKey || event.ctrlKey) return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest('select, textarea, input[type="text"], input[type="number"]')
+      ) {
+        return;
+      }
+      event.preventDefault();
+      commands.current['play-stop']();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <div className="app">
@@ -405,22 +814,37 @@ export const App = (): JSX.Element => {
             <span className="value">{globalSpeed.toFixed(2)}x</span>
           </label>
 
-          <label>
-            Vibrato
-            <input
-              type="range"
-              min={0}
-              max={400}
-              step={1}
-              value={vibratoCents}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setVibratoCents(v);
-                client.current!.send({ type: 'vibratoDepth', cents: v });
-              }}
-            />
-            <span className="value">{vibratoCents}¢</span>
-          </label>
+          {delay ? (
+            <label title="How much of the echo goes back round">
+              Feedback
+              <input
+                type="range"
+                min={0}
+                max={0.95}
+                step={0.01}
+                value={echoFeedback}
+                onChange={(e) => setEchoFeedback(Number(e.target.value))}
+              />
+              <span className="value">{Math.round(echoFeedback * 100)}%</span>
+            </label>
+          ) : (
+            <label>
+              Vibrato
+              <input
+                type="range"
+                min={0}
+                max={400}
+                step={1}
+                value={vibratoCents}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setVibratoCents(v);
+                  client.current!.send({ type: 'vibratoDepth', cents: v });
+                }}
+              />
+              <span className="value">{vibratoCents}¢</span>
+            </label>
+          )}
 
           <span className="readout">{hz > 0 ? `${hz.toFixed(hz < 100 ? 1 : 0)} Hz` : '—'}</span>
         </div>
@@ -440,8 +864,8 @@ export const App = (): JSX.Element => {
           >
             {theme === 'dark' ? 'Light' : 'Dark'}
           </button>
-          {paper && (
-            <label className="toggle" title="Show the reading over the paper">
+          {(paper || tonal) && (
+            <label className="toggle" title="Show what the machine reads from the marks">
               <input
                 type="checkbox"
                 checked={showReading}
@@ -450,18 +874,27 @@ export const App = (): JSX.Element => {
               Reading
             </label>
           )}
-          <button onClick={onScan} title="Read a photo or scan of a printed sheet">
-            Import scan
-          </button>
-          <button onClick={onMidi} title="Read a MIDI file onto the strips">
-            Import MIDI
+          <button onClick={onClear} title="Blank strips and fresh slides (⌘N)">
+            Clear
           </button>
           <button onClick={onOpen}>Open</button>
           <button onClick={onSave}>Save</button>
-          <button onClick={onBlank} title="Save a printable sheet with nothing on it">
-            Blank sheet
-          </button>
-          <button onClick={onExport}>Export PDF</button>
+          <MenuButton
+            label="Import"
+            items={[
+              { label: 'Scan or photo…', title: 'Read a photo or scan of a printed sheet', onSelect: () => void onScan() },
+              { label: 'MIDI file…', title: 'Read a MIDI file onto the strips', onSelect: () => void onMidi() },
+            ]}
+          />
+          <MenuButton
+            label="Export"
+            items={[
+              { label: 'Audio (WAV)…', title: 'Render one pass of the sheet', onSelect: () => void onExportWav() },
+              { label: 'MIDI…', title: 'Render the sheet and write what it played', onSelect: () => void onExportMidi() },
+              { label: 'Sheet (PDF)…', title: 'This drawing, printed on the sheet', onSelect: () => void onExport() },
+              { label: 'Blank sheet (PDF)…', title: 'A sheet with nothing on it, to hand out', onSelect: () => void onBlank() },
+            ]}
+          />
           <button onClick={() => window.oramics?.toggleProjector()}>Projector</button>
         </div>
       </header>
@@ -488,7 +921,6 @@ export const App = (): JSX.Element => {
             {label}
           </label>
         ))}
-        <span className="muted small">Turn these off to leave 1969 behind.</span>
         {status && <span className="status">{status}</span>}
       </section>
 
@@ -515,38 +947,180 @@ export const App = (): JSX.Element => {
             </button>
           </span>
         </div>
-        {LANE_DEFS.map((def) => (
-          <div className="lane" key={def.name}>
-            <div className="lane-label">
-              <strong>{def.label}</strong>
-              <span className="muted small">{def.hint}</span>
-              {def.pending && <span className="pending">not yet wired</span>}
+        {LANE_DEFS.filter((def) => !def.notesOnly || tonal).map((def) => {
+          const notes = tonal !== null && PITCH_LANES.has(def.name);
+          const isNote = notes && def.name === 'pitch';
+          return (
+            <div className="lane" key={def.name}>
+              <div className="lane-label">
+                <strong>
+                  {isNote ? 'Note' : def.name === 'vibrato' && delay ? 'Delay' : def.label}
+                </strong>
+                <span className="muted small">
+                  {notes
+                    ? `one row per ${isNote ? 'note' : 'octave'}`
+                    : def.name === 'vibrato' && delay
+                      ? `height = echo time, ${Math.round(echoSeconds(0) * 1000)} ms to ${echoSeconds(1).toFixed(1)} s`
+                      : def.hint}
+                </span>
+                {def.pending && <span className="pending">not yet wired</span>}
+                {def.name === 'vibrato' && (
+                  <div className="lane-tools">
+                    <div className="segmented" role="group" aria-label="What this strip drives">
+                      <button
+                        className={delay ? '' : 'on'}
+                        onClick={() => setVibratoMode('vibrato')}
+                        title="Strip 8 as built: height bends the pitch either side of the centre"
+                      >
+                        Vibrato
+                      </button>
+                      <button
+                        className={delay ? 'on' : ''}
+                        onClick={() => setVibratoMode('delay')}
+                        title="The same line as an echo time. Not on the machine"
+                      >
+                        Delay
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {def.name === 'reverb' && (
+                  <div className="lane-tools">
+                    <div className="segmented" role="group" aria-label="Reverb space">
+                      <button
+                        className={reverbSpace === 'plate' ? 'on' : ''}
+                        onClick={() => setReverbSpace('plate')}
+                        title="A steel plate, the likeliest thing the send reached"
+                      >
+                        Plate
+                      </button>
+                      <button
+                        className={reverbSpace === 'room' ? 'on' : ''}
+                        onClick={() => setReverbSpace('room')}
+                        title="A small room: early reflections and a short tail"
+                      >
+                        Room
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {def.name === 'pitch' && (
+                  <div className="pitch-tools">
+                    <div className="segmented" role="group" aria-label="Pitch mode">
+                      <button
+                        className={pitchMode === 'hertz' ? 'on' : ''}
+                        onClick={() => setPitchMode('hertz')}
+                        title="One line, height is the frequency (⇧⌘H)"
+                      >
+                        Hertz
+                      </button>
+                      <button
+                        className={pitchMode === 'notes' ? 'on' : ''}
+                        onClick={() => setPitchMode('notes')}
+                        title="A note band and an octave band (⇧⌘H)"
+                      >
+                        Notes
+                      </button>
+                    </div>
+                    {tonal && (
+                      <>
+                        <div className="segmented" role="group" aria-label="Marks">
+                          <button
+                            className={markMode === 'dots' ? 'on' : ''}
+                            onClick={() => setMarkMode('dots')}
+                            title="Each mark sets a note that holds until the next (⇧⌘L)"
+                          >
+                            Dots
+                          </button>
+                          <button
+                            className={markMode === 'lines' ? 'on' : ''}
+                            onClick={() => setMarkMode('lines')}
+                            title="The note follows the line as it moves (⇧⌘L)"
+                          >
+                            Lines
+                          </button>
+                        </div>
+                        <label className="small">
+                          Key
+                          <select
+                            value={tuning.root}
+                            onChange={(e) => setTuning((t) => ({ ...t, root: Number(e.target.value) }))}
+                          >
+                            {NOTE_NAMES.map((name, i) => (
+                              <option key={name} value={i}>
+                                {name}
+                              </option>
+                            ))}
+                          </select>
+                          <select
+                            value={tuning.scale}
+                            onChange={(e) => setTuning((t) => ({ ...t, scale: e.target.value }))}
+                          >
+                            {SCALES.map((scale) => (
+                              <option key={scale.id} value={scale.id}>
+                                {scale.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              <DrawPad
+                track={lanes[def.name]}
+                onChange={(t) => updateLane(def.name, t)}
+                head={heads[def.name] ?? null}
+                bipolar={def.bipolar && !(def.name === 'vibrato' && delay)}
+                fill={
+                  (def.name === 'vibrato' && delay) || (!def.bipolar && !PITCH_LANES.has(def.name))
+                }
+                guides={
+                  notes
+                    ? []
+                    : def.name === 'pitch'
+                      ? [0.11, 0.22, 0.44, 0.88]
+                      : def.name === 'vibrato' && delay
+                        ? ECHO_GUIDES
+                        : [0.5]
+                }
+                rows={
+                  !notes
+                    ? null
+                    : isNote
+                      ? {
+                          count: NOTE_ROWS,
+                          labels: NOTE_NAMES,
+                          // Chromatic shades the sharps, like a keyboard. With a
+                          // scale chosen it shades the notes outside it instead,
+                          // so the rows you can land on read at a glance.
+                          shaded: (r) =>
+                            tuning.scale === 'chromatic' ? SHARP_ROWS.has(r) : !inScale(r, tuning),
+                        }
+                      : { count: OCTAVE_ROWS, labels: OCTAVE_LABELS }
+                }
+                reading={notes ? (isNote ? tonal.note : tonal.octave) : null}
+                markMode={notes ? markMode : 'lines'}
+                erasing={erasing}
+                theme={theme}
+                backdrop={paper?.[def.name] ?? null}
+                showReading={showReading}
+                view={view}
+                onViewChange={setView}
+                duration={DURATION_S}
+                height={Math.round((isNote ? 3.2 : def.weight) * 46)}
+              />
             </div>
-            <DrawPad
-              track={lanes[def.name]}
-              onChange={(t) => updateLane(def.name, t)}
-              head={heads[def.name] ?? null}
-              bipolar={def.bipolar}
-              fill={!def.bipolar && def.name !== 'pitch'}
-              guides={def.name === 'pitch' ? [0.11, 0.22, 0.44, 0.88] : [0.5]}
-              erasing={erasing}
-              theme={theme}
-              backdrop={paper?.[def.name] ?? null}
-              showReading={showReading}
-              view={view}
-              onViewChange={setView}
-              duration={DURATION_S}
-              height={Math.round(def.weight * 46)}
-            />
-          </div>
-        ))}
+          );
+        })}
       </main>
 
       <section className="timbres">
         <div className="timbres-head">
           <span className="muted">
-            Slides — the spot rides the <em>top edge</em>; a gap drops the spot, and a second
-            ribbon gives the loop something to jump to.
+            Each slide is one cycle of the wave. The spot rides the <em>top edge</em>; a gap
+            drops the spot, and a second ribbon gives the loop something to jump to.
           </span>
           <div className="slide-tools">
             <label title="Spectral tilt of the generated stroke">
@@ -581,24 +1155,79 @@ export const App = (): JSX.Element => {
             <div className="timbre" key={i}>
               <div className="lane-label">
                 <strong>Timbre {i + 1}</strong>
-                <span className="muted small">one cycle</span>
+                <label
+                  className={fidelity.monoSum ? 'pan muted-control' : 'pan'}
+                  title={
+                    fidelity.monoSum
+                      ? 'Pan. Mono is on, so this is not heard yet; moving it turns Mono off. Double-click to centre.'
+                      : `Pan: ${panLabel(pan[i]!)}. Double-click to centre.`
+                  }
+                >
+                  L
+                  <input
+                    type="range"
+                    min={-1}
+                    max={1}
+                    step={0.05}
+                    value={pan[i]}
+                    aria-label={`Pan timbre ${i + 1}`}
+                    onChange={(e) => panTimbre(i, Number(e.target.value))}
+                    onDoubleClick={() => panTimbre(i, 0)}
+                  />
+                  R
+                </label>
+                <select
+                  className="preset"
+                  value={presets[i]}
+                  title={`A starting shape for timbre ${i + 1}`}
+                  onChange={(e) => applyPreset(i, e.target.value)}
+                >
+                  <option value="" disabled>
+                    Preset
+                  </option>
+                  {PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
                 <button
                   className="dice"
                   title={`Randomise timbre ${i + 1}`}
-                  onClick={() => randomiseSlide(i)}
+                  onClick={() => {
+                    randomiseSlide(i);
+                    setPreset(i, '');
+                  }}
                 >
                   Randomise
                 </button>
               </div>
-              <PaintPad
-                field={field}
-                width={SLIDE_WIDTH}
-                height={SLIDE_HEIGHT}
-                onChange={(f) => updateSlide(i, f)}
-                erasing={erasing}
-                theme={theme}
-                displayHeight={124}
-              />
+              <div className="timbre-pad">
+                <PaintPad
+                  field={field}
+                  width={SLIDE_WIDTH}
+                  height={SLIDE_HEIGHT}
+                  onChange={(f) => {
+                    updateSlide(i, f);
+                    setPreset(i, '');
+                  }}
+                  erasing={erasing}
+                  theme={theme}
+                  displayHeight={124}
+                  ghosts={ghosts[i]!}
+                />
+                {/* On the slide rather than in the header, so it cannot push the
+                    slide down when it appears. */}
+                {unison[i]!.voices > 1 && (
+                  <button
+                    className="unison-tag"
+                    title="Detuned copies of this timbre, drawn as the orange echoes. Click to go back to one voice."
+                    onClick={() => setTimbreUnison(i, NO_UNISON)}
+                  >
+                    ×{unison[i]!.voices} ±{unison[i]!.cents}¢ ✕
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

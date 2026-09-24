@@ -85,6 +85,8 @@ export const blurField = (
 export interface ScannableSlide {
   light(x01: number, y01: number): number;
   columnHasPaint(x01: number, threshold?: number): boolean;
+  /** False for clear glass: nothing painted anywhere on it. */
+  readonly painted: boolean;
 }
 
 export class Slide implements ScannableSlide {
@@ -94,6 +96,16 @@ export class Slide implements ScannableSlide {
   private readonly opacity: Float32Array;
   /** Darkest point in each column, so the scanner can tell bare glass from a gap. */
   private readonly columnPaint: Float32Array;
+  /**
+   * Is there paint anywhere at all?
+   *
+   * Clear glass passes the light straight through, so the photocell sees a
+   * steady beam and the voice is silent. The scanner sits at the rail in that
+   * case, which is a constant rather than a sound, but a constant multiplied by
+   * a rising amplitude is a thump. Knowing the slide is empty lets the machine
+   * put out nothing at all.
+   */
+  readonly painted: boolean;
 
   private constructor(opacity: Float32Array, width: number, height: number) {
     this.opacity = opacity;
@@ -108,6 +120,7 @@ export class Slide implements ScannableSlide {
       }
       this.columnPaint[x] = max;
     }
+    this.painted = this.columnPaint.some((v) => v >= 0.5);
   }
 
   /**

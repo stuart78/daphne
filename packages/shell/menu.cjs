@@ -23,6 +23,7 @@ const buildMenu = (send) => {
   const fileMenu = {
     label: 'File',
     submenu: [
+      { label: 'New', accelerator: 'CmdOrCtrl+N', click: () => send('clear') },
       { label: 'Open…', accelerator: 'CmdOrCtrl+O', click: () => send('open') },
       { label: 'Save…', accelerator: 'CmdOrCtrl+S', click: () => send('save') },
       { type: 'separator' },
@@ -33,11 +34,13 @@ const buildMenu = (send) => {
       },
       { label: 'Import MIDI…', accelerator: 'Shift+CmdOrCtrl+M', click: () => send('import-midi') },
       {
-        label: 'New Blank Sheet…',
+        label: 'Blank Sheet PDF…',
         accelerator: 'Shift+CmdOrCtrl+N',
         click: () => send('export-blank'),
       },
       { label: 'Export PDF…', accelerator: 'Shift+CmdOrCtrl+E', click: () => send('export-pdf') },
+      { label: 'Export Audio…', accelerator: 'Shift+CmdOrCtrl+A', click: () => send('export-wav') },
+      { label: 'Export MIDI…', click: () => send('export-midi') },
       // Windows and Linux have no application menu to hang Quit off.
       ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit' }]),
     ],
@@ -56,6 +59,17 @@ const buildMenu = (send) => {
       { label: 'Fit Whole Sheet', accelerator: 'CmdOrCtrl+0', click: () => send('zoom-fit') },
       { type: 'separator' },
       { label: 'Light or Dark', accelerator: 'CmdOrCtrl+D', click: () => send('theme') },
+      { type: 'separator' },
+      // Shown for discovery only. The page handles Space itself so that it
+      // still types into the key and scale pickers.
+      {
+        label: 'Play or Stop',
+        accelerator: 'Space',
+        registerAccelerator: false,
+        click: () => send('play-stop'),
+      },
+      { label: 'Pitch in Hertz or Notes', accelerator: 'Shift+CmdOrCtrl+H', click: () => send('pitch-mode') },
+      { label: 'Notes as Dots or Lines', accelerator: 'Shift+CmdOrCtrl+L', click: () => send('mark-mode') },
       { type: 'separator' },
       { role: 'reload' },
       { role: 'toggleDevTools' },

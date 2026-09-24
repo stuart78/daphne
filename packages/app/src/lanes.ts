@@ -3,7 +3,16 @@
  * scanned page and an on-screen drawing are the same thing.
  */
 
-import { SLIDE_HEIGHT, SLIDE_WIDTH, type LaneName } from '@oramics/engine';
+import {
+  DEFAULT_OCTAVE,
+  LOWEST_OCTAVE,
+  OCTAVE_ROWS,
+  SLIDE_HEIGHT,
+  SLIDE_WIDTH,
+  rowValue,
+  type LaneName,
+} from '@oramics/engine';
+import type { Layout } from '@oramics/template';
 
 export { SLIDE_WIDTH, SLIDE_HEIGHT };
 
@@ -33,10 +42,24 @@ export interface LaneDef {
   weight: number;
   /** Not yet wired to anything in the engine. */
   pending?: boolean;
+  /** Only shown when pitch is read as notes. */
+  notesOnly?: boolean;
 }
 
 export const LANE_DEFS: LaneDef[] = [
   { name: 'pitch', role: 'PCH', label: 'Pitch', hint: 'height = Hertz, linear', rest: 0.5, hold: true, bipolar: false, weight: 2.4 },
+  {
+    name: 'octave',
+    role: 'OCT',
+    label: 'Octave',
+    hint: 'one row per octave',
+    rest: rowValue(DEFAULT_OCTAVE - LOWEST_OCTAVE, OCTAVE_ROWS),
+    hold: true,
+    bipolar: false,
+    // Eight rows want about the same row height as the note band's twelve.
+    weight: 2.1,
+    notesOnly: true,
+  },
   { name: 'amp1', role: 'AMP1', label: 'Amplitude 1', hint: 'height = loudness', rest: 0, bipolar: false, weight: 1.4 },
   { name: 'amp2', role: 'AMP2', label: 'Amplitude 2', hint: 'height = loudness', rest: 0, bipolar: false, weight: 1.4 },
   { name: 'amp3', role: 'AMP3', label: 'Amplitude 3', hint: 'height = loudness', rest: 0, bipolar: false, weight: 1.4 },
@@ -87,23 +110,54 @@ export const makeTimbre = (): Float32Array => {
   return out;
 };
 
+/** The shapes a slide can be painted with in one go. Blank is clear glass. */
+export type SlideShape = 'blank' | 'sine' | 'saw' | 'square';
+
+/** One cycle of each shape, phase 0-1 to height -1 to 1. */
+const SHAPES: Record<Exclude<SlideShape, 'blank'>, (phase: number) => number> = {
+  sine: (p) => Math.sin(2 * Math.PI * p),
+  // Rises across the cycle and drops at the end. The servo cannot follow the
+  // drop instantly, so the edge rounds off the way a painted one would.
+  saw: (p) => 2 * p - 1,
+  square: (p) => (p < 0.5 ? 1 : -1),
+};
+
 /**
- * A blank glass slide with one sine ribbon painted on it, so a fresh timbre
- * gives the scanner something to lock onto. The stroke is comfortably wider
- * than the spot, as Oram's are.
+ * A glass slide with one ribbon painted on it in a given shape. The stroke is
+ * comfortably wider than the spot, as Oram's are, so the scanner has something
+ * to lock onto.
  */
-export const makeSlideField = (): Float32Array => {
+export const paintSlide = (shape: SlideShape): Float32Array => {
   const field = new Float32Array(SLIDE_WIDTH * SLIDE_HEIGHT);
+  // Clear glass: nothing for the spot to ride, so the timbre falls silent.
+  if (shape === 'blank') return field;
   const thickness = Math.round(SLIDE_HEIGHT * 0.14);
+  const wave = SHAPES[shape];
   for (let x = 0; x < SLIDE_WIDTH; x++) {
-    const v = Math.sin((2 * Math.PI * x) / SLIDE_WIDTH);
+    const v = wave(x / SLIDE_WIDTH);
     const top = Math.round(((1 - v) / 2) * (SLIDE_HEIGHT - 1 - thickness));
     for (let y = top; y < top + thickness; y++) field[y * SLIDE_WIDTH + x] = 1;
   }
   return field;
 };
 
+/** A sine slide, so a fresh timbre sounds like something. */
+export const makeSlideField = (): Float32Array => paintSlide('sine');
+
 export type LaneMap = Record<LaneName, LaneTrack>;
 
 export const makeAllLanes = (): LaneMap =>
   Object.fromEntries(LANE_DEFS.map((d) => [d.name, makeLane(d)])) as LaneMap;
+
+/**
+ * The printed band a lane is read from, on a given sheet.
+ *
+ * Pitch lives in one band on the original sheet and two on the note-and-octave
+ * one, so the same lane has a different band name depending on which sheet it
+ * came from or is going to. The octave lane has no band at all on the original.
+ */
+export const roleFor = (def: LaneDef, layout: Layout): string | null => {
+  if (def.name === 'pitch') return layout === 'TONE' ? 'NOTE' : 'PCH';
+  if (def.name === 'octave') return layout === 'TONE' ? 'OCT' : null;
+  return def.role;
+};

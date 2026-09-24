@@ -7,13 +7,19 @@
 import { StrictMode, useEffect, useRef, useState, type JSX } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import type { ProjectorMessage } from './App.js';
+import { NOTE_ROWS, OCTAVE_ROWS, type PitchMode } from '@oramics/engine';
+
 import { LANE_DEFS, type LaneTrack } from './lanes.js';
+import { NOTE_NAMES } from './music.js';
+import { openProjectorLink } from './projectorLink.js';
 import { eachRun } from './ui/runs.js';
 import './ui/styles.css';
 
 interface Frame {
   lanes: Record<string, LaneTrack>;
+  pitchMode: PitchMode;
+  reading: { pitch: Float32Array; octave: Float32Array } | null;
+  shaded: number[];
   heads: Record<string, number>;
   hz: number;
   playing: boolean;
@@ -24,18 +30,24 @@ const Projector = (): JSX.Element => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    const channel = new BroadcastChannel('oramics');
     // Lanes and transport arrive separately; merge them into one view state.
-    channel.onmessage = (e: MessageEvent<ProjectorMessage>) => {
-      const msg = e.data;
+    return openProjectorLink((msg) => {
+      if (msg.kind === 'hello') return;
       setFrame((prev) => {
-        const base: Frame = prev ?? { lanes: {}, heads: {}, hz: 0, playing: false };
+        const base: Frame = prev ?? {
+          lanes: {},
+          pitchMode: 'hertz',
+          reading: null,
+          shaded: [],
+          heads: {},
+          hz: 0,
+          playing: false,
+        };
         return msg.kind === 'lanes'
-          ? { ...base, lanes: msg.lanes }
+          ? { ...base, lanes: msg.lanes, pitchMode: msg.pitchMode, reading: msg.reading, shaded: msg.shaded }
           : { ...base, heads: msg.heads, hz: msg.hz, playing: msg.playing };
       });
-    };
-    return () => channel.close();
+    });
   }, []);
 
   useEffect(() => {
@@ -54,17 +66,41 @@ const Projector = (): JSX.Element => {
     ctx.fillStyle = '#0a090c';
     ctx.fillRect(0, 0, w, h);
 
-    const totalWeight = LANE_DEFS.reduce((s, d) => s + d.weight, 0);
+    const notes = frame.pitchMode === 'notes';
+    // The same lanes the editor shows: the octave band only exists in Notes mode.
+    const defs = LANE_DEFS.filter((d) => !d.notesOnly || notes);
+    const weightOf = (d: (typeof defs)[number]): number => (notes && d.name === 'pitch' ? 3.2 : d.weight);
+    const totalWeight = defs.reduce((s, d) => s + weightOf(d), 0);
     const gap = 10;
-    const usable = h - gap * (LANE_DEFS.length - 1) - 40;
+    const usable = h - gap * (defs.length - 1) - 40;
     let y = 20;
 
-    for (const def of LANE_DEFS) {
-      const bandH = (def.weight / totalWeight) * usable;
+    for (const def of defs) {
+      const bandH = (weightOf(def) / totalWeight) * usable;
       const track = frame.lanes[def.name];
+      const rows = !notes ? 0 : def.name === 'pitch' ? NOTE_ROWS : def.name === 'octave' ? OCTAVE_ROWS : 0;
 
       ctx.fillStyle = '#141317';
       ctx.fillRect(0, y, w, bandH);
+
+      if (rows) {
+        const rowH = bandH / rows;
+        for (let r = 0; r < rows; r++) {
+          const top = y + bandH - (r + 1) * rowH;
+          if (def.name === 'pitch' && frame.shaded.includes(r)) {
+            ctx.fillStyle = '#1d1b22';
+            ctx.fillRect(0, top, w, rowH);
+          }
+          ctx.fillStyle = '#4a4653';
+          ctx.font = `${Math.max(9, Math.min(14, rowH * 0.7))}px ui-sans-serif, system-ui, sans-serif`;
+          ctx.textBaseline = 'middle';
+          const label = def.name === 'pitch' ? NOTE_NAMES[r]! : String(r + 1);
+          ctx.textAlign = 'right';
+          ctx.fillText(label, w - 8, top + rowH / 2);
+          ctx.textAlign = 'left';
+        }
+        ctx.textBaseline = 'alphabetic';
+      }
 
       ctx.strokeStyle = '#26242c';
       ctx.lineWidth = 1;
@@ -100,9 +136,39 @@ const Projector = (): JSX.Element => {
         });
       }
 
+      // What plays, as a staircase over the marks, the same as the editor.
+      const reading = !frame.reading
+        ? null
+        : def.name === 'pitch'
+          ? frame.reading.pitch
+          : def.name === 'octave'
+            ? frame.reading.octave
+            : null;
+      if (reading) {
+        const n = reading.length;
+        ctx.strokeStyle = '#ff7a4d';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        let held = Number.NaN;
+        for (let i = 0; i < n; i++) {
+          const v = reading[i]!;
+          if (!Number.isFinite(v)) continue;
+          const px = (i / (n - 1)) * w;
+          const py = y + bandH * (1 - v);
+          if (!Number.isFinite(held)) ctx.moveTo(px, py);
+          else if (v !== held) {
+            ctx.lineTo(px, y + bandH * (1 - held));
+            ctx.lineTo(px, py);
+          }
+          held = v;
+        }
+        if (Number.isFinite(held)) ctx.lineTo(w, y + bandH * (1 - held));
+        ctx.stroke();
+      }
+
       ctx.fillStyle = '#6d6878';
       ctx.font = '600 13px ui-sans-serif, system-ui, sans-serif';
-      ctx.fillText(def.label.toUpperCase(), 10, y + 16);
+      ctx.fillText((notes && def.name === 'pitch' ? 'Note' : def.label).toUpperCase(), 10, y + 16);
 
       const head = frame.heads[def.name];
       if (head !== undefined) {

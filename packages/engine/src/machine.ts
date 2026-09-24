@@ -13,7 +13,14 @@
 
 import { ControlLane } from './lane.js';
 import { DEFAULT_RELAYS, RelayBank, type RelayOptions } from './neume.js';
-import { DEFAULT_PLATE, PlateReverb, type PlateOptions } from './reverb.js';
+import { DEFAULT_ECHO, Echo, type EchoOptions } from './echo.js';
+import {
+  DEFAULT_PLATE,
+  PlateReverb,
+  reverbOptions,
+  type PlateOptions,
+  type ReverbSpace,
+} from './reverb.js';
 import { DEFAULT_SCANNER_OPTS, FlyingSpotScanner, type ScannerOptions } from './scanner.js';
 import { Slide } from './slide.js';
 import { DEFAULT_VACTROL, DirectGain, Vactrol, type AmplitudeStage, type VactrolOptions } from './vactrol.js';
@@ -37,6 +44,55 @@ export const PITCH_RANGE = { minHz: 55, maxHz: 880 } as const;
  */
 export const PITCH_LANE_MAX_HZ = 1000;
 
+/**
+ * How a drawing becomes a pitch.
+ *
+ *   hertz  one lane, height is the frequency in Hz. What the painted code meant
+ *          on the original machine, and hard to draw a tune on.
+ *   notes  two lanes, a note in twelve rows and an octave in eight below it,
+ *          added in semitones and turned into Hertz once. The shape of Oram's
+ *          1976 design, and what Richards built.
+ *
+ * Only the reading changes. The relays, the servo and everything else that
+ * makes it sound like the machine are the same in both.
+ */
+export type PitchMode = 'hertz' | 'notes';
+
+/**
+ * What the vibrato strip drives.
+ *
+ * `vibrato` is strip 8 as built: height bends the pitch either side of the
+ * centre line. `delay` hands the same line to an echo instead, where height is
+ * the delay time. One line, two jobs, one at a time.
+ */
+export type VibratoMode = 'vibrato' | 'delay';
+
+/** Rows in the note lane, C at the bottom. */
+export const NOTE_ROWS = 12;
+/** Rows in the octave lane, bottom first. */
+export const OCTAVE_ROWS = 8;
+/** The octave the bottom row of the octave lane spells: C1 is 32.7 Hz. */
+export const LOWEST_OCTAVE = 1;
+/**
+ * Where an unmarked octave lane sits: octave 4, so a note drawn with no
+ * octave at all plays around middle C rather than at the bottom of the range.
+ */
+export const DEFAULT_OCTAVE = 4;
+
+/** The centre of a row, as a lane value. What the app sends for a chosen row. */
+export const rowValue = (row: number, rows: number): number => (row + 0.5) / rows;
+
+/** Which row a lane value falls in. */
+export const valueRow = (value: number, rows: number): number =>
+  Math.max(0, Math.min(rows - 1, Math.floor(Math.max(0, Math.min(1, value)) * rows)));
+
+/** Equal temperament, A440. */
+export const midiToHz = (midi: number): number => 440 * 2 ** ((midi - 69) / 12);
+
+/** A note row and an octave row, as a MIDI note number. C4 is 60. */
+export const notesToMidi = (noteRow: number, octaveRow: number): number =>
+  12 * (octaveRow + LOWEST_OCTAVE + 1) + noteRow;
+
 export interface Fidelity {
   /**
    * Round pitch to a whole number of Hertz. The machine took frequency as
@@ -46,7 +102,10 @@ export interface Fidelity {
   integerHzPitch: boolean;
   /** Route amplitude through the bulb-and-photoresistor model. */
   opticalAmplitude: boolean;
-  /** Sum to mono, as the machine did. */
+  /**
+   * Sum to mono, as the machine did. Off, each timbre sits where its pan
+   * setting puts it and the output is stereo.
+   */
   monoSum: boolean;
   /**
    * Read the pitch lane as a linear number of Hertz, which is what the painted
@@ -90,20 +149,65 @@ export interface MachineOptions {
   scanner?: ScannerOptions;
   relays?: RelayOptions;
   plate?: PlateOptions;
+  echo?: EchoOptions;
   /** Full-scale vibrato deflection, in cents. */
   vibratoDepthCents?: number;
 }
 
 /** The vertical slice of a slide one timbre is reading, in -1..1. */
+/**
+ * Detuned copies of a timbre, reading the same slide.
+ *
+ * Not something the machine could do: it had one spot per slide. This is here
+ * for the supersaw and detune presets, and is off (one voice) unless asked for.
+ */
+export interface Unison {
+  /** Voices in total, the original included. 1 is off. */
+  voices: number;
+  /** How far the outermost voices sit from the original, either way. */
+  cents: number;
+}
+
+export const MAX_UNISON_VOICES = 7;
+
+/** The extra voices' tunings: spread evenly across the range, leaving out the one nearest the original. */
+export const unisonRatios = ({ voices, cents }: Unison): number[] => {
+  const n = Math.max(1, Math.min(MAX_UNISON_VOICES, Math.round(voices)));
+  if (n === 1 || cents === 0) return [];
+  const offsets = Array.from({ length: n }, (_, k) => -cents + (2 * cents * k) / (n - 1));
+  let nearest = 0;
+  offsets.forEach((o, k) => {
+    if (Math.abs(o) < Math.abs(offsets[nearest]!)) nearest = k;
+  });
+  offsets.splice(nearest, 1);
+  return offsets.map((c) => 2 ** (c / 1200));
+};
+
+interface UnisonVoices {
+  ratios: Float32Array;
+  scanners: FlyingSpotScanner[];
+  /** Phases for the wavetable path, which has no scanner to keep one. */
+  phases: Float64Array;
+  /** Scales the sum so more voices do not simply mean louder. */
+  norm: number;
+}
+
 export interface ScanWindow {
   low: number;
   high: number;
 }
 
-export type LaneName = 'pitch' | 'vibrato' | 'reverb' | 'transport' | `amp${1 | 2 | 3 | 4}`;
+export type LaneName =
+  | 'pitch'
+  | 'octave'
+  | 'vibrato'
+  | 'reverb'
+  | 'transport'
+  | `amp${1 | 2 | 3 | 4}`;
 
 const LANE_NAMES: LaneName[] = [
   'pitch',
+  'octave',
   'vibrato',
   'reverb',
   'transport',
@@ -137,6 +241,8 @@ export class Machine {
   private readonly fadeSamples: number;
   private scanners: FlyingSpotScanner[];
   private windows: ScanWindow[];
+  private unison: UnisonVoices[];
+  private scannerOpts: ScannerOptions;
   private amps: AmplitudeStage[];
   /**
    * DC blocker state. The scanner's output is a deflection voltage, and it
@@ -146,9 +252,21 @@ export class Machine {
    */
   private dcX = 0;
   private dcY = 0;
+  /** The right channel's blocker, used only in stereo. */
+  private dcXR = 0;
+  private dcYR = 0;
+  /** Per-timbre channel gains from the pan settings. 1 and 1 at the centre. */
+  private panL = new Float32Array(TIMBRE_COUNT).fill(1);
+  private panR = new Float32Array(TIMBRE_COUNT).fill(1);
   private readonly dcR: number;
   private readonly relays: RelayBank;
-  private readonly plate: PlateReverb;
+  private mode: PitchMode = 'hertz';
+  private plate: PlateReverb;
+  private reverbSpace: ReverbSpace = 'plate';
+  private readonly echo: Echo;
+  private vibratoMode: VibratoMode = 'vibrato';
+  /** Scratch for the echo's two channels, so the render loop allocates nothing. */
+  private readonly echoOut: [number, number] = [0, 0];
   /**
    * Flat arrays of the same lanes the record holds. `for...of` over a record's
    * keys allocates an iterator every sample, which is exactly the kind of
@@ -161,7 +279,12 @@ export class Machine {
   private vactrolOpts: VactrolOptions;
 
   /** Most recent values, for the UI. Not used by the DSP. */
-  readonly meters = { hz: 0, gains: new Float32Array(TIMBRE_COUNT) };
+  readonly meters = {
+    hz: 0,
+    /** The pitch the sheet asks for, before relay lag and vibrato. */
+    targetHz: 0,
+    gains: new Float32Array(TIMBRE_COUNT),
+  };
 
   constructor(opts: MachineOptions) {
     this.sampleRate = opts.sampleRate;
@@ -172,6 +295,7 @@ export class Machine {
     this.dcR = 1 - (2 * Math.PI * 10) / this.sampleRate;
     this.relays = new RelayBank(this.sampleRate, opts.relays ?? DEFAULT_RELAYS);
     this.plate = new PlateReverb(this.sampleRate, opts.plate ?? DEFAULT_PLATE);
+    this.echo = new Echo(this.sampleRate, opts.echo ?? DEFAULT_ECHO);
 
     this.lanes = Object.fromEntries(LANE_NAMES.map((n) => [n, new ControlLane()])) as Record<
       LaneName,
@@ -186,6 +310,10 @@ export class Machine {
     // rather than dropping to nothing. Everything else rests.
     this.lanes.pitch.gapBehaviour = 'hold';
     this.lanes.transport.gapBehaviour = 'hold';
+    // The octave lane is a choice between rows, and it latches like the note.
+    this.lanes.octave.gapBehaviour = 'hold';
+    this.lanes.octave.interpolate = false;
+    this.lanes.octave.defaultValue = rowValue(DEFAULT_OCTAVE - LOWEST_OCTAVE, OCTAVE_ROWS);
 
     this.allLanes = LANE_NAMES.map((n) => this.lanes[n]);
     this.ampLanes = [this.lanes.amp1, this.lanes.amp2, this.lanes.amp3, this.lanes.amp4];
@@ -207,7 +335,31 @@ export class Machine {
       () => new FlyingSpotScanner(this.sampleRate, opts.scanner ?? DEFAULT_SCANNER_OPTS),
     );
     this.windows = Array.from({ length: TIMBRE_COUNT }, () => ({ low: -1, high: 1 }));
+    this.scannerOpts = opts.scanner ?? DEFAULT_SCANNER_OPTS;
+    this.unison = Array.from({ length: TIMBRE_COUNT }, () => this.makeUnison([]));
     this.amps = this.makeAmps();
+  }
+
+  private makeUnison(ratios: number[]): UnisonVoices {
+    return {
+      ratios: Float32Array.from(ratios),
+      scanners: ratios.map(() => new FlyingSpotScanner(this.sampleRate, this.scannerOpts)),
+      phases: new Float64Array(ratios.length),
+      norm: 1 / Math.sqrt(ratios.length + 1),
+    };
+  }
+
+  /**
+   * Detuned copies of one timbre. Allocates, so it is for a message handler,
+   * not the render loop. New voices start from the original's scanner state so
+   * they come in without a jolt.
+   */
+  setUnison(index: number, unison: Unison): void {
+    this.assertTimbre(index);
+    const voices = this.makeUnison(unisonRatios(unison));
+    for (const s of voices.scanners) s.copyStateFrom(this.scanners[index]!);
+    voices.phases.fill(this.phase);
+    this.unison[index] = voices;
   }
 
   private makeAmps(): AmplitudeStage[] {
@@ -265,7 +417,9 @@ export class Machine {
   }
 
   setScannerOptions(opts: ScannerOptions): void {
+    this.scannerOpts = opts;
     for (const s of this.scanners) s.setOptions(opts);
+    for (const u of this.unison) for (const s of u.scanners) s.setOptions(opts);
   }
 
   private assertTimbre(index: number): void {
@@ -297,17 +451,54 @@ export class Machine {
     this.plate.setOptions(opts);
   }
 
+  /**
+   * Plate or room. The delay lengths differ, so this builds a new one: the tail
+   * of the old space stops rather than turning into the new one, which is what
+   * moving the send to another machine would do anyway.
+   */
+  setReverbSpace(space: ReverbSpace): void {
+    if (space === this.reverbSpace) return;
+    this.reverbSpace = space;
+    this.plate = new PlateReverb(this.sampleRate, reverbOptions(space));
+  }
+
+  get space(): ReverbSpace {
+    return this.reverbSpace;
+  }
+
+  /** Whether the vibrato strip bends the pitch or sets an echo time. */
+  setVibratoMode(mode: VibratoMode): void {
+    if (mode === this.vibratoMode) return;
+    this.vibratoMode = mode;
+    this.echo.clear();
+  }
+
+  get vibrato(): VibratoMode {
+    return this.vibratoMode;
+  }
+
+  setEchoOptions(opts: Partial<EchoOptions>): void {
+    this.echo.setOptions(opts);
+  }
+
   reset(): void {
     this.phase = 0;
     for (const lane of this.allLanes) lane.reset();
     for (const a of this.amps) a.reset();
     for (const s of this.scanners) s.reset();
     for (const s of this.previousScanners) s.reset();
+    for (const u of this.unison) {
+      for (const s of u.scanners) s.reset();
+      u.phases.fill(0);
+    }
     this.fadeLeft.fill(0);
     this.relays.reset();
     this.plate.clear();
+    this.echo.clear();
     this.dcX = 0;
     this.dcY = 0;
+    this.dcXR = 0;
+    this.dcYR = 0;
   }
 
   /**
@@ -319,18 +510,65 @@ export class Machine {
    * 110 Hz sits at a ninth of the way up and 880 at seven eighths.
    */
   private laneToHz(v: number): number {
-    const clamped = Math.max(0, Math.min(1, v));
-    const hz = this.fidelity.linearPitchScale
-      ? clamped * PITCH_LANE_MAX_HZ
-      : PITCH_RANGE.minHz * Math.pow(PITCH_RANGE.maxHz / PITCH_RANGE.minHz, clamped);
+    let hz: number;
+    if (this.pitchMode === 'notes') {
+      // Semitones first and Hertz once. Adding in Hertz, or rounding the note
+      // and the octave separately, drifts out of tune in ways nobody can hear
+      // the cause of.
+      const midi = notesToMidi(
+        valueRow(v, NOTE_ROWS),
+        valueRow(this.lanes.octave.read(), OCTAVE_ROWS),
+      );
+      hz = midiToHz(midi);
+    } else {
+      const clamped = Math.max(0, Math.min(1, v));
+      hz = this.fidelity.linearPitchScale
+        ? clamped * PITCH_LANE_MAX_HZ
+        : PITCH_RANGE.minHz * Math.pow(PITCH_RANGE.maxHz / PITCH_RANGE.minHz, clamped);
+    }
+    // Whole Hertz in either mode: the relays can only spell whole numbers, so
+    // middle C comes out at 262, not 261.63.
     return this.fidelity.integerHzPitch ? Math.round(hz) : hz;
   }
 
+  /** How the pitch lanes are read. See `PitchMode`. */
+  get pitchMode(): PitchMode {
+    return this.mode;
+  }
+
+  setPitchMode(mode: PitchMode): void {
+    this.mode = mode;
+    const pitch = this.lanes.pitch;
+    // A note is a choice between rows and must step between them; a Hertz line
+    // is a contour and should glide.
+    pitch.interpolate = mode === 'hertz';
+    pitch.defaultValue = mode === 'notes' ? rowValue(0, NOTE_ROWS) : 0.5;
+  }
+
   /**
-   * Render `frames` samples into `out`. This is the only method the worklet
-   * calls, and it must not allocate.
+   * Where a timbre sits, -1 hard left to 1 hard right. Not something the
+   * machine had: it only takes effect with `monoSum` off.
+   *
+   * Equal power, scaled so the centre is unity in both channels. A centred
+   * timbre then sounds exactly as it does in mono, and moving it to one side
+   * does not make it quieter overall.
    */
-  render(out: Float32Array, frames: number): void {
+  setPan(index: number, pan: number): void {
+    this.assertTimbre(index);
+    const angle = ((Math.max(-1, Math.min(1, pan)) + 1) * Math.PI) / 4;
+    this.panL[index] = Math.SQRT2 * Math.cos(angle);
+    this.panR[index] = Math.SQRT2 * Math.sin(angle);
+  }
+
+  /**
+   * Render `frames` samples into `out`, and into `right` as well for stereo.
+   * With `monoSum` on, or no `right`, both get the same mono mix. This is the
+   * only method the worklet calls, and it must not allocate.
+   */
+  render(out: Float32Array, frames: number, right?: Float32Array): void {
+    const stereo = right !== undefined && !this.fidelity.monoSum;
+    const panL = this.panL;
+    const panR = this.panR;
     const dt = 1 / this.sampleRate;
     const { pitch, vibrato } = this.lanes;
     const ampLanes = this.ampLanes;
@@ -338,18 +576,24 @@ export class Machine {
 
     for (let i = 0; i < frames; i++) {
       let baseHz = this.laneToHz(pitch.read());
+      this.meters.targetHz = baseHz;
       if (this.fidelity.relayLag) {
         // The photocells aim the bank; the bank reports what the resistors
         // currently spell, which lags and overshoots through a carry.
         this.relays.setTargetHz(baseHz);
         baseHz = this.relays.step();
       }
-      // Vibrato is bipolar about the sheet's centre line.
-      const bend = (vibrato.read() - 0.5) * 2 * this.vibratoDepthCents;
-      const hz = baseHz * Math.pow(2, bend / 1200);
+      // Vibrato is bipolar about the sheet's centre line. In delay mode the
+      // same line means a time instead, and the pitch is left alone.
+      const line = vibrato.read();
+      const bend = this.vibratoMode === 'vibrato' ? (line - 0.5) * 2 * this.vibratoDepthCents : 0;
+      const hz = bend === 0 ? baseHz : baseHz * Math.pow(2, bend / 1200);
 
       let sum = 0;
+      let sumL = 0;
+      let sumR = 0;
       for (let t = 0; t < TIMBRE_COUNT; t++) {
+        let voice = 0;
         const gain = this.amps[t]!.process(ampLanes[t]!.read());
         this.meters.gains[t] = gain;
 
@@ -358,7 +602,8 @@ export class Machine {
           // state carries across cycles, so skipping it would make a note's
           // timbre depend on how long the previous silence was.
           const w = this.windows[t]!;
-          let spot = this.scanners[t]!.step(this.slides[t]!, hz, w.low, w.high);
+          const slide = this.slides[t]!;
+          let spot = this.scanners[t]!.step(slide, hz, w.low, w.high);
           if (this.fadeLeft[t]! > 0) {
             const outgoing = this.previousScanners[t]!.step(
               this.previousSlides[t]!,
@@ -370,24 +615,77 @@ export class Machine {
             const mix = 1 - this.fadeLeft[t]! / this.fadeSamples;
             spot = outgoing + (spot - outgoing) * mix;
           }
-          if (gain > 0) sum += spot * gain;
-        } else if (gain > 0) {
-          sum += this.wavetableFor(t).sample(this.phase, hz, this.sampleRate) * gain;
+          const u = this.unison[t]!;
+          if (u.ratios.length > 0) {
+            // Stepped even when silent, like the original, for the same reason.
+            let voices = spot;
+            for (let k = 0; k < u.ratios.length; k++) {
+              voices += u.scanners[k]!.step(this.slides[t]!, hz * u.ratios[k]!, w.low, w.high);
+            }
+            spot = voices * u.norm;
+          }
+          // Clear glass is silence, not a rail held at full deflection.
+          if (gain > 0 && slide.painted) voice = spot * gain;
+        } else {
+          const u = this.unison[t]!;
+          if (gain > 0) {
+            const table = this.wavetableFor(t);
+            let voices = table.sample(this.phase, hz, this.sampleRate);
+            for (let k = 0; k < u.ratios.length; k++) {
+              voices += table.sample(u.phases[k]!, hz * u.ratios[k]!, this.sampleRate);
+            }
+            voice = (u.ratios.length > 0 ? voices * u.norm : voices) * gain;
+          }
+          for (let k = 0; k < u.ratios.length; k++) {
+            const p = u.phases[k]! + (hz * u.ratios[k]!) / this.sampleRate;
+            u.phases[k] = p - Math.floor(p);
+          }
         }
+        sum += voice;
+        sumL += voice * panL[t]!;
+        sumR += voice * panR[t]!;
       }
 
       this.phase += hz / this.sampleRate;
       if (this.phase >= 1) this.phase -= Math.floor(this.phase);
 
       let mixed = sum / TIMBRE_COUNT;
+      let echoL = 0;
+      let echoR = 0;
+      if (this.vibratoMode === 'delay') {
+        // In front of the reverb send, so the echoes go to the plate too.
+        this.echo.process(
+          stereo ? sumL / TIMBRE_COUNT : mixed,
+          stereo ? sumR / TIMBRE_COUNT : mixed,
+          line,
+          this.echoOut,
+        );
+        echoL = this.echoOut[0];
+        echoR = this.echoOut[1];
+        mixed += (echoL + echoR) / 2;
+      }
       // Strip 9 sets how much of the whole four-timbre mix reaches the plate.
       // Always run the tank: muting it would cut the tail the moment the send
       // came down, and a tail outlasting the line that made it is the point.
+      // The plate is fed the mono mix and returns to both sides equally, as a
+      // single plate on a stereo desk would.
       const wet = this.plate.process(mixed * this.lanes.reverb.read());
-      mixed += wet;
-      this.dcY = mixed - this.dcX + this.dcR * this.dcY;
-      this.dcX = mixed;
-      out[i] = this.dcY;
+      if (stereo) {
+        const l = sumL / TIMBRE_COUNT + echoL + wet;
+        const r = sumR / TIMBRE_COUNT + echoR + wet;
+        this.dcY = l - this.dcX + this.dcR * this.dcY;
+        this.dcX = l;
+        this.dcYR = r - this.dcXR + this.dcR * this.dcYR;
+        this.dcXR = r;
+        out[i] = this.dcY;
+        right[i] = this.dcYR;
+      } else {
+        mixed += wet;
+        this.dcY = mixed - this.dcX + this.dcR * this.dcY;
+        this.dcX = mixed;
+        out[i] = this.dcY;
+        if (right) right[i] = this.dcY;
+      }
       this.meters.hz = hz;
 
       // Strip 10 drives the clutch. The centre line is normal speed, the top

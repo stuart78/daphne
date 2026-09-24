@@ -14,6 +14,7 @@
     "test": "tsx --test src/*.test.ts"
   },
   "dependencies": {
+    "@oramics/engine": "workspace:*",
     "@oramics/template": "workspace:*"
   },
   "devDependencies": {

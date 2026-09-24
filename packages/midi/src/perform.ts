@@ -24,6 +24,7 @@
  * and a MIDI file has already had its tempo baked into the note times.
  */
 
+import { LOWEST_OCTAVE, NOTE_ROWS, OCTAVE_ROWS, rowValue } from '@oramics/engine';
 import { PITCH_MAX_HZ } from '@oramics/template';
 
 import type { ControlEvent, NoteEvent, Song } from './smf.js';
@@ -45,6 +46,15 @@ export interface PerformOptions {
   longer?: 'fit' | 'truncate';
   /** Semitones a full pitch bend covers. Two is the near-universal default. */
   bendRange?: number;
+  /**
+   * Which pitch strips to write.
+   *
+   * `hertz` writes one line on the Hertz strip. `notes` writes a note row and
+   * an octave row, for the note-and-octave sheet, which is what a MIDI note
+   * already is. Bends go to the vibrato strip either way; a note row has no
+   * room for them.
+   */
+  pitch?: 'hertz' | 'notes';
 }
 
 export interface Performance {
@@ -66,6 +76,7 @@ export interface Performance {
 export const noteToHz = (note: number): number => 440 * 2 ** ((note - 69) / 12);
 
 const LANES = ['PCH', 'AMP1', 'AMP2', 'AMP3', 'AMP4', 'VIB', 'REV', 'TRN'];
+const TONAL_LANES = ['NOTE', 'OCT', 'AMP1', 'AMP2', 'AMP3', 'AMP4', 'VIB', 'REV', 'TRN'];
 
 /** Latest control value at or before a time, or null if there was never one. */
 const controlAt = (events: ControlEvent[], at: number): number | null => {
@@ -81,9 +92,10 @@ export const perform = (song: Song, opts: PerformOptions = {}): Performance => {
   const duration = opts.duration ?? 30;
   const columns = opts.columns ?? 3000;
   const bendRange = opts.bendRange ?? 2;
+  const notes = opts.pitch === 'notes';
 
   const lanes: Record<string, Float32Array> = {};
-  for (const role of LANES) lanes[role] = new Float32Array(columns).fill(Number.NaN);
+  for (const role of notes ? TONAL_LANES : LANES) lanes[role] = new Float32Array(columns).fill(Number.NaN);
 
   /*
    * Fit or truncate.
@@ -113,8 +125,8 @@ export const perform = (song: Song, opts: PerformOptions = {}): Performance => {
   const hasWheel = wheels.length > 0;
 
   let masked = 0;
-  let outOfRange = 0;
   const seen = new Set<NoteEvent>();
+  const unplayable = new Set<NoteEvent>();
 
   for (let i = 0; i < columns; i++) {
     const at = (span * i) / (columns - 1);
@@ -143,12 +155,22 @@ export const perform = (song: Song, opts: PerformOptions = {}): Performance => {
     if (!winner) continue;
 
     const bend = controlAt(bends, at) ?? 0;
-    const hz = noteToHz(winner.note + bend * bendRange);
-    if (hz > PITCH_MAX_HZ) {
-      outOfRange++;
-      continue;
+    if (notes) {
+      const octave = Math.floor(winner.note / 12) - 1 - LOWEST_OCTAVE;
+      if (octave < 0 || octave >= OCTAVE_ROWS) {
+        unplayable.add(winner);
+        continue;
+      }
+      lanes.NOTE![i] = rowValue(winner.note % 12, NOTE_ROWS);
+      lanes.OCT![i] = rowValue(octave, OCTAVE_ROWS);
+    } else {
+      const hz = noteToHz(winner.note + bend * bendRange);
+      if (hz > PITCH_MAX_HZ) {
+        unplayable.add(winner);
+        continue;
+      }
+      lanes.PCH![i] = Math.max(0, Math.min(1, hz / PITCH_MAX_HZ));
     }
-    lanes.PCH![i] = Math.max(0, Math.min(1, hz / PITCH_MAX_HZ));
 
     const timbre = timbres[winner.track] ?? 0;
     lanes[`AMP${timbre + 1}`]![i] = winner.velocity;
@@ -167,5 +189,5 @@ export const perform = (song: Song, opts: PerformOptions = {}): Performance => {
     if (reverb !== null) lanes.REV![i] = reverb;
   }
 
-  return { lanes, used, rate, masked, outOfRange, timbres };
+  return { lanes, used, rate, masked, outOfRange: unplayable.size, timbres };
 };

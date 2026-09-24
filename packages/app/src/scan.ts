@@ -11,6 +11,7 @@
  * separate "scanned" representation.
  */
 
+import type { Layout } from '@oramics/template';
 import { importRgba, type ImportResult, type Rectified } from '@oramics/vision';
 
 import {
@@ -19,6 +20,7 @@ import {
   SLIDE_HEIGHT,
   SLIDE_WIDTH,
   makeAllLanes,
+  roleFor,
   type LaneMap,
 } from './lanes.js';
 
@@ -36,6 +38,8 @@ export interface ScanResult {
   paper: Record<string, Rectified>;
   /** Sheet id from the QR, if it decoded. */
   sheetId: string | null;
+  /** Which sheet it was: the original, or the note-and-octave one. */
+  layout: Layout;
   /** Seconds the field represents, from the sheet itself where possible. */
   durationS: number;
   /** Worst corner fit in millimetres. Under about half a millimetre is good. */
@@ -94,8 +98,15 @@ export const toSession = (result: ImportResult): ScanResult => {
   if (!result.ok) throw new Error(result.message);
 
   const lanes = makeAllLanes();
+  const crops: Record<string, Rectified> = {};
   for (const def of LANE_DEFS) {
-    const raw = result.contents.lanes[def.role];
+    // The same lane has a different band on each sheet: pitch is NOTE on the
+    // note-and-octave sheet and PCH on the original.
+    const role = roleFor(def, result.layout);
+    if (!role) continue;
+    const crop = result.contents.crops[role];
+    if (crop) crops[def.name] = crop;
+    const raw = result.contents.lanes[role];
     if (!raw) continue;
     const values = resample(raw, LANE_SAMPLES);
     lanes[def.name] = { values, strokes: strokesFrom(values) };
@@ -106,9 +117,8 @@ export const toSession = (result: ImportResult): ScanResult => {
     // Already opacity fields at the slide's own resolution: what somebody
     // painted on the panel, handed to the engine as painted glass.
     slides: result.contents.slides,
-    paper: Object.fromEntries(
-      LANE_DEFS.map((def) => [def.name, result.contents.crops[def.role]!]).filter(([, c]) => c),
-    ) as Record<string, Rectified>,
+    paper: crops,
+    layout: result.layout,
     sheetId: result.payload?.sheetId ?? null,
     durationS: result.durationS,
     fitMm: result.fitMm,

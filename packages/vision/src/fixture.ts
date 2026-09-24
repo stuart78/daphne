@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buildDocument, sheetPayload, type Overlays } from '@oramics/template';
+import { buildDocument, sheetPayload, type Layout, type Overlays } from '@oramics/template';
 
 import { parsePgm } from './testing.js';
 import type { Gray } from './image.js';
@@ -32,9 +32,11 @@ export const renderSheet = async (
   dpi: number,
   overlays?: Overlays,
   sheetId = 'A3F91C2D',
+  layout: Layout = 'FULL',
 ): Promise<Gray> => {
+  const payload = sheetPayload(sheetId, undefined, layout);
   const pdf = await buildDocument({
-    pages: [{ kind: 'machine', options: { payload: sheetPayload(sheetId), ...(overlays ? { overlays } : {}) } }],
+    pages: [{ kind: 'machine', options: { payload, ...(overlays ? { overlays } : {}) } }],
   });
 
   const dir = mkdtempSync(join(tmpdir(), 'oramics-vision-'));

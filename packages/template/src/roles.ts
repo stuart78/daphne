@@ -21,7 +21,11 @@ export type FieldKind =
   /** Binary-coded decimal cells — the faithful neume encoding. */
   | 'bcd'
   /** One cycle of a waveform: x is phase, not time. */
-  | 'cycle';
+  | 'cycle'
+  /** Twelve rows, one per semitone, C at the bottom. */
+  | 'notes'
+  /** Eight rows, one per octave, the lowest at the bottom. */
+  | 'octaves';
 
 export interface ReferenceLine {
   /** 0 = bottom rail, 1 = top rail. */
@@ -119,6 +123,32 @@ export const ROLES: RoleDef[] = [
       'change it. Use the neume sheet if you want to punch the binary yourself.',
     ],
     railLabels: ['0 Hz', `${PITCH_MAX_HZ} Hz`],
+  },
+  {
+    id: 'NOTE',
+    title: 'Note',
+    blurb: 'Which of the twelve notes, C at the bottom',
+    kind: 'notes',
+    historicalStrip: "Oram's 1976 design, as built by Richards",
+    shortHint: 'one row per note',
+    instructions: [
+      'Mark a row to choose a note. With dots, each mark holds until the next one;',
+      'with lines, the note follows the line as it moves. Either way the app snaps to the',
+      'nearest note, and to the key and scale you pick, so the rows are a guide, not a target.',
+    ],
+    railLabels: ['C', 'B'],
+  },
+  {
+    id: 'OCT',
+    title: 'Octave',
+    blurb: 'Which octave the note is in, lowest at the bottom',
+    kind: 'octaves',
+    historicalStrip: "Oram's 1976 design, as built by Richards",
+    shortHint: 'one row per octave',
+    instructions: [
+      'Mark a row to choose an octave. Leave it blank and the notes play around middle C.',
+    ],
+    railLabels: ['1', '8'],
   },
   {
     id: 'NEU',

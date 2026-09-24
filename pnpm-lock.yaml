@@ -63,6 +63,9 @@ importers:
 
   packages/midi:
     dependencies:
+      '@oramics/engine':
+        specifier: workspace:*
+        version: link:../engine
       '@oramics/template':
         specifier: workspace:*
         version: link:../template

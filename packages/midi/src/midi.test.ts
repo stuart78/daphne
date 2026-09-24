@@ -214,6 +214,27 @@ test('notes the strip cannot spell are counted, not clipped silently', () => {
   assert.ok(Number.isNaN(result.lanes.PCH![at]!), 'an unplayable note should leave the strip blank');
 });
 
+test('in notes mode a note lands as a note row and an octave row', () => {
+  // A4 then C6: rows A and C, octaves 4 and 6. Rows count from the bottom.
+  const bytes = file([[noteOn(0, 69), noteOff(480, 69), noteOn(480, 84), noteOff(960, 84)]]);
+  const result = importMidi(bytes, { columns: 300, pitch: 'notes' });
+  const at = (lane: string, seconds: number, rows: number): number =>
+    Math.floor(result.lanes[lane]![Math.round((seconds / 30) * 299)]! * rows);
+  assert.equal(at('NOTE', 0.25, 12), 9, 'A is the tenth row');
+  assert.equal(at('OCT', 0.25, 8), 3, 'octave 4 is the fourth row up, octave 1 being the first');
+  assert.equal(at('NOTE', 0.75, 12), 0);
+  assert.equal(at('OCT', 0.75, 8), 5);
+  assert.ok(!('PCH' in result.lanes), 'the Hertz strip is not on this sheet');
+});
+
+test('in notes mode only notes outside the eight octaves are refused', () => {
+  // C8 is above the Hertz strip but on the octave band. C0 is below both.
+  const bytes = file([[noteOn(0, 108), noteOff(240, 108), noteOn(240, 12), noteOff(480, 12)]]);
+  const result = importMidi(bytes, { columns: 300, pitch: 'notes' });
+  assert.equal(result.outOfRange, 1, 'one note, counted once rather than per column');
+  assert.ok(Number.isFinite(result.lanes.OCT![Math.round((0.1 / 30) * 299)]!), 'C8 fits');
+});
+
 test('the transport strip is left alone', () => {
   // Blank transport is normal speed, and the file's tempo is already baked into
   // the note times.

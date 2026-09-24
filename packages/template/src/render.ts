@@ -37,7 +37,7 @@ import {
   type Rect,
 } from './geometry.js';
 import { NEUME, PITCH_MARKS, PITCH_MAX_HZ, getRole, type RoleDef } from './roles.js';
-import { encodePayload, type SheetPayload } from './payload.js';
+import { encodePayload, layoutOf, type SheetPayload } from './payload.js';
 
 // ---------------------------------------------------------------------------
 // Ink
@@ -605,6 +605,9 @@ const drawBandTimeGrid = (ctx: Ctx, f: Rect): void => {
 };
 
 /** Tiny rail annotations placed inside the band, since the gutter holds the name. */
+/** Row names for the note band, C at the bottom. */
+const NOTE_LABELS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
 const insideLabel = (ctx: Ctx, s: string, x: number, y: number): void =>
   // Printed at rule weight, not text weight: these sit inside the drawing area,
   // so the importer has to be able to ignore them like any other furniture.
@@ -622,6 +625,49 @@ const drawBand = (ctx: Ctx, band: Band, role: RoleDef): void => {
   drawBandTimeGrid(ctx, f);
 
   switch (role.kind) {
+    case 'notes':
+    case 'octaves': {
+      /*
+       * One row per choice, printed light enough that the importer never sees
+       * it. A mark does not have to sit inside a row: the app snaps to the
+       * nearest one, so the grid is a guide for the hand, not a target.
+       */
+      const notes = role.kind === 'notes';
+      const rows = notes ? 12 : 8;
+      const rowH = f.h / rows;
+      const rowY = (r: number): number => f.y + f.h - (r + 1) * rowH;
+
+      if (notes) {
+        // The sharps shaded, as on a keyboard, so C and F can be found without
+        // counting up from the bottom.
+        for (const r of [1, 3, 6, 8, 10]) {
+          ctx.page.drawRectangle({
+            x: mmToPt(f.x),
+            y: ctx.Y(rowY(r) + rowH),
+            width: mmToPt(f.w),
+            height: mmToPt(rowH),
+            color: grey(0.955),
+          });
+        }
+      }
+      for (let r = 1; r < rows; r++) {
+        hLine(ctx, f.x, f.x + f.w, f.y + f.h - r * rowH, { color: ctx.pal.gridFaint, width: 0.2 });
+      }
+
+      // Labelled on both edges, so nobody has to carry a ruler across the sheet.
+      const label = (r: number): string =>
+        notes ? NOTE_LABELS[r]! : String(r + 1);
+      for (let r = 0; r < rows; r++) {
+        const y = rowY(r) + rowH / 2 + 1;
+        text(ctx, label(r), f.x + 1.2, y, { size: 4.6, color: ctx.pal.rail });
+        text(ctx, label(r), f.x + f.w - 1.2, y, {
+          size: 4.6,
+          color: ctx.pal.rail,
+          align: 'right',
+        });
+      }
+      break;
+    }
     case 'logpitch': {
       // Linear in Hertz, like the sheet: the code and the frequency are the
       // same number.
@@ -828,16 +874,21 @@ const drawMachineSheet = async (doc: PDFDocument, opts: CombinedOptions): Promis
   const ctx = await makeCtx(doc, opts.gridStyle);
   const payloadText = encodePayload(opts.payload);
 
+  const layout = layoutOf(opts.payload);
+
   drawFiducials(ctx);
   drawCombinedHeader(
     ctx,
     'ORAMICS — ONE PIECE',
-    `Draw a line in each band. Height is the value; a blank band is left alone. ` +
-      `${SHEET_DURATION_S.toFixed(0)} seconds, 1 cm = 1 s.`,
+    layout === 'TONE'
+      ? `Mark a note and an octave, with dots or lines. Draw a line in every other band. ` +
+          `${SHEET_DURATION_S.toFixed(0)} seconds, 1 cm = 1 s.`
+      : `Draw a line in each band. Height is the value; a blank band is left alone. ` +
+          `${SHEET_DURATION_S.toFixed(0)} seconds, 1 cm = 1 s.`,
     opts.payload,
   );
 
-  for (const band of machineBands()) {
+  for (const band of machineBands(layout)) {
     const role = getRole(band.role);
     drawBand(ctx, band, role);
     const drawn = opts.overlays?.[band.role];

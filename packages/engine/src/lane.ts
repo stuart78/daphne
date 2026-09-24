@@ -35,6 +35,16 @@ export class ControlLane {
   gapBehaviour: 'rest' | 'hold' = 'rest';
 
   /**
+   * Blend between neighbouring samples, or step from one to the next.
+   *
+   * Right for a contour and wrong for a choice. A note lane stepping from E to A
+   * between two columns would, interpolated, spend a few milliseconds on F, F#
+   * and G on the way, and those are notes nobody wrote. Stepping lanes take the
+   * sample to their left and hold it until the next.
+   */
+  interpolate = true;
+
+  /**
    * Last drawn value seen, for 'hold'. Null until one has been read.
    *
    * "Hold" means sustain the last value; before anything has been drawn there
@@ -100,7 +110,7 @@ export class ControlLane {
     // whole cell is a gap, so a drawn stretch never starts early — it begins
     // exactly where it was drawn.
     if (!Number.isFinite(a)) return this.gap();
-    if (!Number.isFinite(b)) return this.sample(a);
+    if (!Number.isFinite(b) || !this.interpolate) return this.sample(a);
 
     const f = pos - i0;
     return this.sample(a * (1 - f) + b * f);
