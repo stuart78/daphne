@@ -17,7 +17,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          # Pinned, not latest. electron-builder 25 signs by making its own
+          # temporary keychain, and on the macOS 26 image that keychain refuses
+          # its own password: every build fails at set-key-partition-list with
+          # "the passphrase you entered is not correct", before Apple is ever
+          # contacted. The same secrets signed fine on the older image.
+          - os: macos-15
             name: macOS
           - os: windows-latest
             name: Windows
