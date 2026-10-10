@@ -4,7 +4,7 @@
  * AudioContext in the app no matter how many windows are open.
  */
 
-import { StrictMode, useEffect, useRef, useState, type JSX } from 'react';
+import { StrictMode, useCallback, useEffect, useRef, useState, type JSX } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { NOTE_ROWS, OCTAVE_ROWS, type PitchMode } from '@oramics/engine';
@@ -14,6 +14,22 @@ import { NOTE_NAMES } from './music.js';
 import { openProjectorLink } from './projectorLink.js';
 import { eachRun } from './ui/runs.js';
 import './ui/styles.css';
+
+/** Seconds the sheet represents, as in the editor. */
+const DURATION_S = 30;
+
+/** The projector is always dark: it is pointed at a wall in a dim room. */
+const INK = {
+  page: '#08070a',
+  band: '#15141a',
+  shaded: '#1d1b23',
+  grid: '#232029',
+  gridStrong: '#343040',
+  mark: '#f4f1ea',
+  accent: '#ff7a4d',
+  name: '#8a8498',
+  faint: '#575265',
+} as const;
 
 interface Frame {
   lanes: Record<string, LaneTrack>;
@@ -50,7 +66,12 @@ const Projector = (): JSX.Element => {
     });
   }, []);
 
-  useEffect(() => {
+  /*
+   * One painting pass, called on every new frame and whenever the window
+   * changes size. Resizing used to leave the canvas at its old pixel size and
+   * let CSS stretch it, which smeared the type across the glass.
+   */
+  const paint = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || !frame) return;
     const ctx = canvas.getContext('2d');
@@ -59,11 +80,12 @@ const Projector = (): JSX.Element => {
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    ctx.fillStyle = '#0a090c';
+    ctx.fillStyle = INK.page;
     ctx.fillRect(0, 0, w, h);
 
     const notes = frame.pitchMode === 'notes';
@@ -71,44 +93,83 @@ const Projector = (): JSX.Element => {
     const defs = LANE_DEFS.filter((d) => !d.notesOnly || notes);
     const weightOf = (d: (typeof defs)[number]): number => (notes && d.name === 'pitch' ? 3.2 : d.weight);
     const totalWeight = defs.reduce((s, d) => s + weightOf(d), 0);
-    const gap = 10;
-    const usable = h - gap * (defs.length - 1) - 40;
-    let y = 20;
+
+    /*
+     * A gutter for the names, so nothing is printed over the drawing. Across a
+     * room the label matters as much as the line does, and at the old size it
+     * sat on top of the amplitude it was naming.
+     */
+    const pad = Math.max(10, Math.round(h * 0.015));
+    const ruler = Math.max(22, Math.round(h * 0.035));
+    const gap = Math.max(6, Math.round(h * 0.012));
+    const usable = h - pad * 2 - ruler - gap * (defs.length - 1);
+
+    /*
+     * The gutter is as wide as the longest name needs, within reason, and the
+     * type shrinks if even that is not enough. REVERBERATION is the long one,
+     * and on a narrow window it used to run out of its gutter and under the
+     * bands.
+     */
+    const names = defs.map((d) =>
+      (notes && d.name === 'pitch' ? 'Note' : d.label).toUpperCase(),
+    );
+    let nameSize = Math.max(11, Math.min(19, h * 0.022));
+    const widest = (): number => {
+      ctx.font = `600 ${nameSize}px ui-sans-serif, system-ui, sans-serif`;
+      return Math.max(...names.map((n) => ctx.measureText(n).width));
+    };
+    const maxGutter = Math.max(70, w * 0.2);
+    while (nameSize > 9 && widest() + pad + 12 > maxGutter) nameSize -= 1;
+    const gutter = Math.min(maxGutter, widest() + pad + 12);
+    const fieldX = gutter;
+    const fieldW = w - gutter - pad;
+
+    const atX = (t: number): number => fieldX + fieldW * t;
+    let y = pad;
 
     for (const def of defs) {
       const bandH = (weightOf(def) / totalWeight) * usable;
       const track = frame.lanes[def.name];
       const rows = !notes ? 0 : def.name === 'pitch' ? NOTE_ROWS : def.name === 'octave' ? OCTAVE_ROWS : 0;
 
-      ctx.fillStyle = '#141317';
-      ctx.fillRect(0, y, w, bandH);
+      // The band itself, as a panel with a hairline rather than a bare block.
+      ctx.fillStyle = INK.band;
+      ctx.beginPath();
+      ctx.roundRect(fieldX, y, fieldW, bandH, 4);
+      ctx.fill();
 
       if (rows) {
         const rowH = bandH / rows;
         for (let r = 0; r < rows; r++) {
           const top = y + bandH - (r + 1) * rowH;
           if (def.name === 'pitch' && frame.shaded.includes(r)) {
-            ctx.fillStyle = '#1d1b22';
-            ctx.fillRect(0, top, w, rowH);
+            ctx.fillStyle = INK.shaded;
+            ctx.fillRect(fieldX, top, fieldW, rowH);
           }
-          ctx.fillStyle = '#4a4653';
-          ctx.font = `${Math.max(9, Math.min(14, rowH * 0.7))}px ui-sans-serif, system-ui, sans-serif`;
-          ctx.textBaseline = 'middle';
-          const label = def.name === 'pitch' ? NOTE_NAMES[r]! : String(r + 1);
-          ctx.textAlign = 'right';
-          ctx.fillText(label, w - 8, top + rowH / 2);
-          ctx.textAlign = 'left';
+          if (rowH > 11) {
+            ctx.fillStyle = INK.faint;
+            ctx.font = `${Math.max(9, Math.min(13, rowH * 0.62))}px ui-sans-serif, system-ui, sans-serif`;
+            ctx.textBaseline = 'middle';
+            ctx.textAlign = 'right';
+            ctx.fillText(
+              def.name === 'pitch' ? NOTE_NAMES[r]! : String(r + 1),
+              fieldX + fieldW - 6,
+              top + rowH / 2,
+            );
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+          }
         }
-        ctx.textBaseline = 'alphabetic';
       }
 
-      ctx.strokeStyle = '#26242c';
-      ctx.lineWidth = 1;
-      for (let s = 1; s < 30; s++) {
-        const x = Math.round((w * s) / 30) + 0.5;
+      // A line a second, heavier every fifth, as the printed sheet rules it.
+      for (let sec = 1; sec < DURATION_S; sec++) {
+        ctx.strokeStyle = sec % 5 === 0 ? INK.gridStrong : INK.grid;
+        ctx.lineWidth = 1;
+        const x = Math.round(atX(sec / DURATION_S)) + 0.5;
         ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x, y + bandH);
+        ctx.moveTo(x, y + 1);
+        ctx.lineTo(x, y + bandH - 1);
         ctx.stroke();
       }
 
@@ -119,19 +180,19 @@ const Projector = (): JSX.Element => {
         // each other.
         const { values } = track;
         const n = values.length;
-        ctx.strokeStyle = '#f2eee6';
-        ctx.lineWidth = 3.5;
+        ctx.strokeStyle = INK.mark;
+        ctx.lineWidth = Math.max(2, Math.min(5, bandH * 0.055));
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
         eachRun({ values, strokes: track.strokes }, (from, to) => {
           ctx.beginPath();
           for (let i = from; i <= to; i++) {
-            const px = (i / (n - 1)) * w;
+            const px = atX(i / (n - 1));
             const py = y + bandH * (1 - Math.max(0, Math.min(1, values[i]!)));
             if (i === from) ctx.moveTo(px, py);
             else ctx.lineTo(px, py);
           }
-          if (from === to) ctx.lineTo((from / (n - 1)) * w + 0.01, y + bandH * (1 - values[from]!));
+          if (from === to) ctx.lineTo(atX(from / (n - 1)) + 0.01, y + bandH * (1 - values[from]!));
           ctx.stroke();
         });
       }
@@ -146,14 +207,14 @@ const Projector = (): JSX.Element => {
             : null;
       if (reading) {
         const n = reading.length;
-        ctx.strokeStyle = '#ff7a4d';
+        ctx.strokeStyle = INK.accent;
         ctx.lineWidth = 2.5;
         ctx.beginPath();
         let held = Number.NaN;
         for (let i = 0; i < n; i++) {
           const v = reading[i]!;
           if (!Number.isFinite(v)) continue;
-          const px = (i / (n - 1)) * w;
+          const px = atX(i / (n - 1));
           const py = y + bandH * (1 - v);
           if (!Number.isFinite(held)) ctx.moveTo(px, py);
           else if (v !== held) {
@@ -162,19 +223,28 @@ const Projector = (): JSX.Element => {
           }
           held = v;
         }
-        if (Number.isFinite(held)) ctx.lineTo(w, y + bandH * (1 - held));
+        if (Number.isFinite(held)) ctx.lineTo(atX(1), y + bandH * (1 - held));
         ctx.stroke();
       }
 
-      ctx.fillStyle = '#6d6878';
-      ctx.font = '600 13px ui-sans-serif, system-ui, sans-serif';
-      ctx.fillText((notes && def.name === 'pitch' ? 'Note' : def.label).toUpperCase(), 10, y + 16);
+      // The name, in the gutter, right-aligned against its band.
+      ctx.fillStyle = INK.name;
+      ctx.font = `600 ${nameSize}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(
+        (notes && def.name === 'pitch' ? 'Note' : def.label).toUpperCase(),
+        gutter - 12,
+        y + bandH / 2,
+      );
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
 
       const head = frame.heads[def.name];
       if (head !== undefined) {
-        ctx.strokeStyle = '#ff7a4d';
+        ctx.strokeStyle = INK.accent;
         ctx.lineWidth = 2;
-        const x = Math.round(head * w) + 0.5;
+        const x = Math.round(atX(head)) + 0.5;
         ctx.beginPath();
         ctx.moveTo(x, y);
         ctx.lineTo(x, y + bandH);
@@ -184,10 +254,59 @@ const Projector = (): JSX.Element => {
       y += bandH + gap;
     }
 
-    ctx.fillStyle = '#9a94a8';
-    ctx.font = '600 15px ui-monospace, monospace';
-    ctx.fillText(frame.hz > 0 ? `${frame.hz.toFixed(0)} Hz` : '—', 10, h - 12);
+    /*
+     * The ruler, under the bands: the same seconds the sheet is printed with,
+     * so a room watching this and a person holding the paper are looking at the
+     * same thirty seconds.
+     */
+    const rulerY = h - pad - ruler + 4;
+    ctx.strokeStyle = INK.gridStrong;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(fieldX, rulerY + 0.5);
+    ctx.lineTo(fieldX + fieldW, rulerY + 0.5);
+    ctx.stroke();
+    ctx.fillStyle = INK.faint;
+    ctx.font = `${Math.max(10, Math.min(14, h * 0.016))}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    for (let sec = 0; sec <= DURATION_S; sec += 5) {
+      const x = atX(sec / DURATION_S);
+      ctx.beginPath();
+      ctx.moveTo(Math.round(x) + 0.5, rulerY);
+      ctx.lineTo(Math.round(x) + 0.5, rulerY + 5);
+      ctx.stroke();
+      // The first and last labels sit inside the field rather than hanging off
+      // the end of it.
+      ctx.textAlign = sec === 0 ? 'left' : sec === DURATION_S ? 'right' : 'center';
+      ctx.fillText(String(sec), x, rulerY + 17);
+    }
+    ctx.textAlign = 'left';
+
+    // Where the head is, and what it is sounding, large enough to read across
+    // a room.
+    const head = frame.heads.pitch ?? 0;
+    ctx.fillStyle = INK.name;
+    ctx.font = `600 ${Math.max(13, Math.min(20, h * 0.024))}px ui-monospace, monospace`;
+    ctx.fillText(`${(head * DURATION_S).toFixed(1)} s`, pad, h - pad - 2);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = frame.playing ? INK.accent : INK.name;
+    ctx.fillText(frame.hz > 0 ? `${frame.hz.toFixed(0)} Hz` : '—', w - pad, h - pad - 2);
+    ctx.textAlign = 'left';
   }, [frame]);
+
+  useEffect(() => {
+    paint();
+  }, [paint]);
+
+  // Repaint when the window changes size, rather than letting the old picture
+  // be stretched into the new shape.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => paint());
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [paint]);
 
   return (
     <div className="projector">

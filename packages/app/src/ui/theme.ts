@@ -16,6 +16,15 @@
 
 export type Theme = 'light' | 'dark';
 
+/**
+ * The themes on offer, in the order the picker lists them. Adding one means a
+ * palette in styles.css under `:root[data-theme="..."]` and an entry here.
+ */
+export const THEMES: { id: Theme; label: string }[] = [
+  { id: 'light', label: 'Light' },
+  { id: 'dark', label: 'Dark' },
+];
+
 export const initialTheme = (): Theme =>
   window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 

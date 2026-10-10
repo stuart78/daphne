@@ -101,8 +101,12 @@ export class ControlLane {
     const n = this.data.length;
     const pos = (this.position / this.durationS) * (n - 1);
     const i0 = Math.floor(pos);
-    if (i0 < 0) return this.sample(this.data[0]!);
-    if (i0 >= n - 1) return this.sample(this.data[n - 1]!);
+    // Past either end the head sits on one sample rather than between two. It
+    // can be a blank one: a sheet whose drawing stops before the right-hand
+    // edge ends on blank paper, and a head clamped there was handing back NaN
+    // rather than resting or holding.
+    if (i0 < 0) return this.at(this.data[0]!);
+    if (i0 >= n - 1) return this.at(this.data[n - 1]!);
 
     const a = this.data[i0]!;
     const b = this.data[i0 + 1]!;
@@ -119,6 +123,11 @@ export class ControlLane {
   private sample(v: number): number {
     this.held = v;
     return v;
+  }
+
+  /** One drawn sample, or the gap behaviour where it is blank. */
+  private at(v: number): number {
+    return Number.isFinite(v) ? this.sample(v) : this.gap();
   }
 
   private gap(): number {

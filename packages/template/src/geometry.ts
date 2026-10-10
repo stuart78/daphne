@@ -13,11 +13,42 @@
 export const MM_PER_INCH = 25.4;
 export const PT_PER_MM = 72 / MM_PER_INCH;
 
-/** US Legal, landscape. 14" x 8.5". */
+/** US Legal, landscape. 14" x 8.5". The sheet is drawn in these coordinates. */
 export const PAGE = {
   widthMm: 14 * MM_PER_INCH, // 355.6
   heightMm: 8.5 * MM_PER_INCH, // 215.9
 } as const;
+
+/** Paper the sheet can be printed on. */
+export type Paper = 'legal' | 'letter';
+
+export const PAPER_SIZES: Record<Paper, { widthMm: number; heightMm: number; name: string }> = {
+  legal: { widthMm: 14 * MM_PER_INCH, heightMm: 8.5 * MM_PER_INCH, name: 'US Legal' },
+  letter: { widthMm: 11 * MM_PER_INCH, heightMm: 8.5 * MM_PER_INCH, name: 'US Letter' },
+};
+
+/**
+ * How much the sheet shrinks to fit a given paper.
+ *
+ * The whole sheet is drawn once, in Legal millimetres, and a smaller paper
+ * prints the same drawing smaller. Evenly, in both directions: squeezing the
+ * width alone would condense the type and turn the QR into a rectangle no
+ * phone would read.
+ *
+ * The importer needs no part of this. It registers on the four corner squares,
+ * and a uniform shrink leaves them a smaller copy of the same rectangle, which
+ * the homography undoes along with print scale and camera angle. A sheet from
+ * either paper therefore reads back in Legal coordinates, which is what every
+ * other piece of geometry here is quoted in.
+ *
+ * What it costs is the scale: 30 seconds still fit, so on Letter a second is
+ * about 8 mm rather than 10. The printed ruler still says seconds.
+ */
+export const paperScale = (paper: Paper): number =>
+  Math.min(
+    PAPER_SIZES[paper].widthMm / PAGE.widthMm,
+    PAPER_SIZES[paper].heightMm / PAGE.heightMm,
+  );
 
 /**
  * Nominal read-head speed in page-millimetres per second.

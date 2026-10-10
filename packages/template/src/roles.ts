@@ -202,11 +202,11 @@ export const ROLES: RoleDef[] = [
     shortHint: 'centre = normal speed',
     instructions: [
       'Draw one continuous line. The heavy centre line is normal speed; the top rail is double,',
-      'the bottom rail is a dead stop. Everything slows and speeds together, pitch included.',
+      'the bottom rail a tenth. Everything slows and speeds together, pitch included.',
       'Careful: this sheet warps its own time axis, so the printed ruler stops being true',
       'the moment you leave the centre line.',
     ],
-    railLabels: ['stopped', '2.00x'],
+    railLabels: ['0.10x', '2.00x'],
     referenceLines: [{ at: 0.5, label: '1.00x  normal' }],
   },
   ...[1, 2, 3, 4].map((n): RoleDef => ({

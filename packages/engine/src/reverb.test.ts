@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { ControlLane } from './lane.js';
-import { Machine } from './machine.js';
+import { Machine, TRANSPORT_MIN_RATE } from './machine.js';
 import { DEFAULT_PLATE, DEFAULT_ROOM, PlateReverb } from './reverb.js';
 import { Slide } from './slide.js';
 
@@ -124,10 +124,16 @@ test('the transport strip drives the read heads', () => {
   };
   const normal = travelled(0.5); // centre line
   const double = travelled(1); // top rail
-  const stopped = travelled(0); // bottom rail
+  const slowest = travelled(0); // bottom rail
 
   assert.ok(Math.abs(double / normal - 2) < 0.05, `top rail gave ${(double / normal).toFixed(2)}x`);
-  assert.ok(stopped < normal * 0.05, `bottom rail should halt, travelled ${stopped.toFixed(3)}s`);
+  // The bottom rail crawls rather than halting, so a piece drawn there still
+  // reaches its end.
+  assert.ok(
+    Math.abs(slowest / normal - TRANSPORT_MIN_RATE) < 0.02,
+    `bottom rail gave ${(slowest / normal).toFixed(3)}x`,
+  );
+  assert.ok(slowest > 0, 'the heads stopped dead');
 });
 
 test('a blank transport strip runs at normal speed', () => {

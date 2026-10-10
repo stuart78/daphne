@@ -1,6 +1,8 @@
 # @oramics/template
 
-Printable drawing sheets for contributors. US Legal (8.5 × 14"), landscape.
+Printable drawing sheets for contributors. US Legal (8.5 × 14"), landscape, or
+US Letter with `--paper letter`: the same sheet shrunk evenly to fit, holding
+the same thirty seconds at about 8 mm to the second instead of 10.
 
 **One page per piece.** Every time-domain lane as a horizontal band, with the
 four timbres in a strip underneath as one-cycle panels. One thing to print, one
@@ -9,6 +11,7 @@ thing to scan, not thirteen.
 ```bash
 pnpm template                            # the sheet
 pnpm template -- --layout tonal          # pitch as a note band and an octave band
+pnpm template -- --paper letter          # the same sheet on 8.5 x 11
 pnpm template -- --neumes                # ...plus the binary pitch sheet
 pnpm template -- --layout solo --roles AMP1,VIB   # one full page per role
 pnpm template -- --grid nonphoto         # blue grid, for channel dropout

@@ -28,6 +28,7 @@ export type ShellCommand =
   | 'save'
   | 'export-pdf'
   | 'export-blank'
+  | 'export-blank-letter'
   | 'import-scan'
   | 'import-midi'
   | 'zoom-in'

@@ -4,7 +4,16 @@
  * moment.
  */
 
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type RGB } from 'pdf-lib';
+import {
+  PDFDocument,
+  StandardFonts,
+  concatTransformationMatrix,
+  pushGraphicsState,
+  rgb,
+  type PDFFont,
+  type PDFPage,
+  type RGB,
+} from 'pdf-lib';
 import qrcode from 'qrcode';
 
 import {
@@ -19,6 +28,9 @@ import {
   orientationRect,
   NOMINAL_SPEED_MM_PER_S,
   PAGE,
+  PAPER_SIZES,
+  paperScale,
+  type Paper,
   QR,
   SHEET_DURATION_S,
   SOLO,
@@ -560,31 +572,26 @@ const drawInstructions = (ctx: Ctx, role: RoleDef): void => {
   }
 };
 
-const drawFooter = (
-  ctx: Ctx,
-  role: RoleDef | null,
-  payload: SheetPayload,
-  payloadText: string,
-): void => {
+const drawFooter = (ctx: Ctx, role: RoleDef | null, payload: SheetPayload): void => {
   // High enough to clear the printer dead zone; horizontally between the two
   // bottom fiducials, which is why it can sit level with them.
   const y = PAGE.heightMm - 6.4;
   // A waveform slide has no duration — its x axis is phase.
   const extent =
     role?.kind === 'cycle' ? 'one cycle' : `${(payload.durationMs / 1000).toFixed(3)} s`;
-  text(
-    ctx,
-    `ORAMICS  ·  sheet ${payload.sheetId}  ·  lane ${String(payload.lane).padStart(2, '0')}  ·  ` +
-      `${payload.role}  ·  ${extent}`,
-    TEXT_LEFT_MM,
-    y,
-    { size: 5.5, color: ctx.pal.muted },
-  );
-  text(ctx, payloadText, FIELD_RIGHT_MM, y, {
-    size: 4.6,
-    color: grey(0.66),
+  /*
+   * Enough to tell one sheet from another in a stack, in words rather than in
+   * code. The QR carries the rest, and carrying it twice only invited the
+   * question of what the second copy was for.
+   */
+  text(ctx, `Daphne  ·  sheet ${payload.sheetId}  ·  ${extent}`, TEXT_LEFT_MM, y, {
+    size: 5.5,
+    color: ctx.pal.muted,
+  });
+  text(ctx, 'Download Daphne at signalfunctionset.com', FIELD_RIGHT_MM, y, {
+    size: 5.5,
+    color: ctx.pal.muted,
     align: 'right',
-    font: ctx.mono,
   });
 };
 
@@ -799,15 +806,9 @@ const drawOverlay = (ctx: Ctx, f: Rect, values: ArrayLike<number>, fill: boolean
   flush();
 };
 
-const drawCombinedHeader = (
-  ctx: Ctx,
-  title: string,
-  subtitle: string,
-  payload: SheetPayload,
-): void => {
+const drawCombinedHeader = (ctx: Ctx, title: string, payload: SheetPayload): void => {
   const y = MACHINE.topMarginMm;
-  text(ctx, title, TEXT_LEFT_MM, y + 8, { size: 15, font: ctx.bold });
-  text(ctx, subtitle, TEXT_LEFT_MM, y + 13, { size: 6.4, color: ctx.pal.muted });
+  text(ctx, title, TEXT_LEFT_MM, y + 10, { size: 15, font: ctx.bold });
 
   const nameX = 196;
   text(ctx, 'DRAWN BY', nameX, y + 5, { size: 5.5, color: ctx.pal.muted, font: ctx.bold });
@@ -871,22 +872,13 @@ const drawSlideStrip = (ctx: Ctx, overlays: Overlays | undefined): void => {
 
 /** The sheet. Every time-domain lane as a band, with the four timbres beneath. */
 const drawMachineSheet = async (doc: PDFDocument, opts: CombinedOptions): Promise<void> => {
-  const ctx = await makeCtx(doc, opts.gridStyle);
+  const ctx = await makeCtx(doc, opts.gridStyle, opts.paper);
   const payloadText = encodePayload(opts.payload);
 
   const layout = layoutOf(opts.payload);
 
   drawFiducials(ctx);
-  drawCombinedHeader(
-    ctx,
-    'ORAMICS — ONE PIECE',
-    layout === 'TONE'
-      ? `Mark a note and an octave, with dots or lines. Draw a line in every other band. ` +
-          `${SHEET_DURATION_S.toFixed(0)} seconds, 1 cm = 1 s.`
-      : `Draw a line in each band. Height is the value; a blank band is left alone. ` +
-          `${SHEET_DURATION_S.toFixed(0)} seconds, 1 cm = 1 s.`,
-    opts.payload,
-  );
+  drawCombinedHeader(ctx, 'Daphne Composition Sheet', opts.payload);
 
   for (const band of machineBands(layout)) {
     const role = getRole(band.role);
@@ -899,7 +891,7 @@ const drawMachineSheet = async (doc: PDFDocument, opts: CombinedOptions): Promis
 
   drawTimeRuler(ctx, { ...machineFieldRect(), h: 0 }, MACHINE_RULER_Y_MM, false);
   drawSlideStrip(ctx, opts.overlays);
-  drawFooter(ctx, null, opts.payload, payloadText);
+  drawFooter(ctx, null, opts.payload);
   await drawQr(ctx, payloadText, FIELD_RIGHT_MM - QR.sizeMm, QR.yMm, QR.sizeMm);
 };
 
@@ -911,6 +903,8 @@ export interface SheetOptions {
   role: RoleDef;
   payload: SheetPayload;
   gridStyle?: GridStyle;
+  /** Paper to print on. The drawing is the same either way, only smaller. */
+  paper?: Paper;
 }
 
 /**
@@ -927,10 +921,31 @@ export interface CombinedOptions {
   payload: SheetPayload;
   gridStyle?: GridStyle;
   overlays?: Overlays;
+  /** Paper to print on. The drawing is the same either way, only smaller. */
+  paper?: Paper;
 }
 
-const makeCtx = async (doc: PDFDocument, gridStyle: GridStyle = 'grey'): Promise<Ctx> => {
-  const page = doc.addPage([mmToPt(PAGE.widthMm), mmToPt(PAGE.heightMm)]);
+const makeCtx = async (
+  doc: PDFDocument,
+  gridStyle: GridStyle = 'grey',
+  paper: Paper = 'legal',
+): Promise<Ctx> => {
+  const size = PAPER_SIZES[paper];
+  const page = doc.addPage([mmToPt(size.widthMm), mmToPt(size.heightMm)]);
+
+  /*
+   * Everything below draws in Legal millimetres. On smaller paper the page is
+   * smaller and the drawing is scaled into it, centred, once, here.
+   */
+  const scale = paperScale(paper);
+  if (scale !== 1) {
+    const x = (size.widthMm - PAGE.widthMm * scale) / 2;
+    const y = (size.heightMm - PAGE.heightMm * scale) / 2;
+    page.pushOperators(
+      pushGraphicsState(),
+      concatTransformationMatrix(scale, 0, 0, scale, mmToPt(x), mmToPt(y)),
+    );
+  }
   return {
     page,
     regular: await doc.embedFont(StandardFonts.Helvetica),
@@ -942,7 +957,7 @@ const makeCtx = async (doc: PDFDocument, gridStyle: GridStyle = 'grey'): Promise
 };
 
 export const drawSheet = async (doc: PDFDocument, opts: SheetOptions): Promise<void> => {
-  const ctx = await makeCtx(doc, opts.gridStyle);
+  const ctx = await makeCtx(doc, opts.gridStyle, opts.paper);
   const f = soloFieldRect();
   const { role, payload } = opts;
   const payloadText = encodePayload(payload);
@@ -972,7 +987,7 @@ export const drawSheet = async (doc: PDFDocument, opts: SheetOptions): Promise<v
   else drawTimeRuler(ctx, f);
 
   drawInstructions(ctx, role);
-  drawFooter(ctx, role, payload, payloadText);
+  drawFooter(ctx, role, payload);
   await drawQr(ctx, payloadText, FIELD_RIGHT_MM - QR.sizeMm, QR.yMm, QR.sizeMm);
 };
 
@@ -988,10 +1003,14 @@ export interface DocumentOptions {
 export const buildDocument = async (opts: DocumentOptions): Promise<Uint8Array> => {
   const doc = await PDFDocument.create();
   doc.setTitle(opts.title ?? 'Oramics drawing sheets');
+  const paper = opts.pages[0]?.options.paper ?? 'legal';
+  const scale = paperScale(paper);
   doc.setSubject(
     `Drawing templates for an Oramics-style drawn-sound instrument. ` +
-      `Time field ${TIME_FIELD_WIDTH_MM} mm at ${NOMINAL_SPEED_MM_PER_S} mm/s = ` +
-      `${SHEET_DURATION_S.toFixed(3)} s. Print at 100% — do not scale to fit.`,
+      `${PAPER_SIZES[paper].name}, landscape. Time field ` +
+      `${(TIME_FIELD_WIDTH_MM * scale).toFixed(1)} mm = ${SHEET_DURATION_S.toFixed(3)} s, ` +
+      `so one second is ${(NOMINAL_SPEED_MM_PER_S * scale).toFixed(1)} mm. ` +
+      `Print at 100% — do not scale to fit.`,
   );
   doc.setCreator('@oramics/template');
   for (const page of opts.pages) {

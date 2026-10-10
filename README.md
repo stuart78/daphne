@@ -6,7 +6,7 @@ sound, on paper or on screen, and the machine plays what you drew.
 Built for running workshops. Print the sheets, let people draw on them, play the
 results.
 
-**[Download v0.2.0](https://github.com/stuart78/oramics/releases/tag/v0.2.0)**
+**[Download v0.3.0](https://github.com/stuart78/oramics/releases/tag/v0.3.0)**
 for macOS, Windows or Linux. The macOS build is signed and notarised, so it
 opens normally. Windows is unsigned and SmartScreen will warn once.
 
@@ -157,7 +157,7 @@ says which sheet it is, so importing a photo of one switches the app to Notes.
 | ⇧⌘H | pitch in Hertz or Notes |
 | ⇧⌘L | notes as dots or lines |
 | ⌘+ ⌘- ⌘0 | zoom in, out, fit |
-| ⌘D | light or dark |
+| ⌘D | next theme |
 | ⌘S ⌘O | save, open |
 | ⌘N | clear and start again |
 | ⇧⌘A | export audio |
@@ -213,6 +213,30 @@ occupies, never merely because it sits at the same height, because the centre
 rail on the transport lane is exactly where people draw and the pitch band's
 rules are the octaves. A stroke laid along a printed rail is the one case this
 cannot separate, and it reads as the rail.
+
+Each band is registered on its own box rather than on the page alone. The
+homography maps the four corner squares exactly, and over 300 mm a printer that
+lays the content a hair small or a hair off centre still leaves a millimetre or
+two unaccounted for at each end: the first second of a band lands on the gutter
+and the last lands inside the frame. So a band looks for its own left and right
+sides, which are the only full-height lines it has, and time is measured along
+the printed band. The registered picture is cut to the same box, so the paper
+sits under the reading rather than beside it.
+
+What the printing hides is put back, where the printing explains it. The rail
+labels sit inside each band and a line drawn behind one goes unread, which used
+to leave an amplitude silent for the first half second of a piece that was drawn
+across the whole sheet. A hole is filled only when every missing column is one
+where the line would have been inside printed ink, and only for a short stretch:
+the widest thing the sheet prints inside a band is 9 mm, and a longer blank
+belongs to the paper.
+
+A scanned timbre is laid again at the weight a brush lays. A pen line is about a
+twentieth of the panel high where enamel is a seventh, and the scanning spot is
+wider than the pen line: the servo gets a weak, broken edge to ride and the
+voice comes out several times quieter than the same shape drawn on screen. The
+traced line is redrawn underneath itself at brush weight with pen skips bridged,
+which leaves the top edge, the part the spot rides, exactly where it was drawn.
 
 ### The paper stays
 
@@ -319,6 +343,15 @@ early reflections in front of it: an echo chamber rather than a plate. Changing
 the space starts the new one empty, so the tail of the old one stops rather than
 turning into it.
 
+## The transport strip
+
+Strip 10 drives the clutch: the centre line is normal speed, the top rail
+double. The bottom rail is a tenth rather than the dead stop the machine's
+clutch could manage. A sheet is thirty seconds long and a workshop is an
+afternoon, and a line drawn along the bottom froze the piece with no way back
+until the line came up again. Slow enough to hear as a halt, fast enough that
+the piece always comes out the other side.
+
 ## Pan
 
 Each timbre has a pan slider, L to R, set once rather than drawn. The machine
@@ -327,6 +360,21 @@ slider while Mono is on turns it off and says so. The pan is equal power with
 the centre at unity, so a centred timbre sounds exactly as it does in mono. The
 plate reverb stays mono and returns to both sides. With Mono off, an audio
 export is stereo. Double-click a slider to centre it.
+
+## Paper
+
+The sheet is US Legal, 8.5 x 14 landscape, because 300 mm of field is what
+makes a second a centimetre and a sheet thirty seconds. **Export ▸ Sheet,
+Letter** prints the same sheet on 8.5 x 11 instead: the whole drawing, shrunk
+evenly to about 79%, so a Letter sheet still holds a whole 30-second piece at
+roughly 8 mm to the second. The printed ruler still reads in seconds.
+
+Evenly, in both directions, rather than squeezed to fit the narrower page: that
+keeps the type readable and the QR square. It also means the importer needs to
+know nothing about it. The four corner squares come back as a smaller copy of
+the same rectangle, and undoing that is the same arithmetic as undoing print
+scale and camera angle, which registration does anyway. A Letter sheet and a
+Legal one read back the same piece.
 
 ## Starting again
 

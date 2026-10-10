@@ -16,7 +16,7 @@ import {
   echoSeconds,
   unisonRatios,
 } from '@oramics/engine';
-import type { Layout } from '@oramics/template';
+import type { Layout, Paper } from '@oramics/template';
 
 import { AudioClient } from './audio/client.js';
 import { LANE_ORDER } from './audio/protocol.js';
@@ -60,9 +60,10 @@ import {
 } from './lanes.js';
 import { DrawPad } from './ui/DrawPad.js';
 import { MenuButton } from './ui/MenuButton.js';
+import { PanDot } from './ui/PanDot.js';
 import { PaintPad } from './ui/PaintPad.js';
 import { Ruler } from './ui/Ruler.js';
-import { applyTheme, initialTheme, type Theme } from './ui/theme.js';
+import { THEMES, applyTheme, initialTheme, type Theme } from './ui/theme.js';
 import { FULL, follow, zoomAt, type View } from './ui/view.js';
 
 /** Matches the printed sheet: 300 mm of field at 10 mm/s. */
@@ -147,6 +148,103 @@ const DEFAULT_SETTINGS: SessionSettings = {
   echoFeedback: 0.35,
   reverbSpace: 'plate',
 };
+
+/*
+ * Transport icons. Drawn here rather than typed as characters: the glyphs for
+ * these sit at different heights in different fonts, and a button that shifts
+ * its contents by a pixel when it changes state looks broken.
+ */
+const PlayIcon = (): JSX.Element => (
+  <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">
+    <path d="M3 1.5 L10 6 L3 10.5 Z" fill="currentColor" />
+  </svg>
+);
+
+const PauseIcon = (): JSX.Element => (
+  <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">
+    <rect x="2.5" y="1.5" width="2.8" height="9" fill="currentColor" />
+    <rect x="6.7" y="1.5" width="2.8" height="9" fill="currentColor" />
+  </svg>
+);
+
+const RewindIcon = (): JSX.Element => (
+  <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">
+    <rect x="1.5" y="1.5" width="1.8" height="9" fill="currentColor" />
+    <path d="M11 1.5 L4.5 6 L11 10.5 Z" fill="currentColor" />
+  </svg>
+);
+
+const PencilIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <path
+      d="M2 12 L2.6 9.6 L9.6 2.6 L11.4 4.4 L4.4 11.4 Z M10.4 1.8 L12.2 3.6"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinejoin="round"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+const EraserIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <path
+      d="M4.6 11.5 L1.8 8.7 L8.2 2.3 L11 5.1 Z M5.6 12 L12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinejoin="round"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+const TrashIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <path
+      d="M2.6 3.6 L11.4 3.6 M5.4 3.6 L5.4 2.2 L8.6 2.2 L8.6 3.6 M3.8 3.6 L4.4 12 L9.6 12 L10.2 3.6 M6 5.6 L6.2 10 M8 5.6 L7.8 10"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinejoin="round"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+const ProjectorIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <rect
+      x="1.4"
+      y="3.2"
+      width="11.2"
+      height="7.2"
+      rx="1.2"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.2"
+    />
+    <path d="M5 12.4 L7 10.4 L9 12.4" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" strokeLinecap="round" />
+    <circle cx="7" cy="6.8" r="1.6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+  </svg>
+);
+
+const PaletteIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <path
+      d="M7 1.4 A5.6 5.6 0 1 0 7 12.6 C8 12.6 8.2 11.9 7.8 11.4 C7.2 10.6 7.7 9.8 8.6 9.8 L10 9.8 A2.6 2.6 0 0 0 12.6 7.2 C12.6 4 10.1 1.4 7 1.4 Z"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinejoin="round"
+    />
+    <circle cx="4.6" cy="5.4" r="0.9" fill="currentColor" />
+    <circle cx="7" cy="4" r="0.9" fill="currentColor" />
+    <circle cx="9.6" cy="5.6" r="0.9" fill="currentColor" />
+    <circle cx="4.6" cy="8.6" r="0.9" fill="currentColor" />
+  </svg>
+);
 
 /** Lanes the engine hears through the note reading rather than as drawn. */
 const PITCH_LANES = new Set<keyof LaneMap>(['pitch', 'octave']);
@@ -455,10 +553,10 @@ export const App = (): JSX.Element => {
     client.current!.send({ type: 'fidelity', patch });
   };
 
-  const onExport = async (): Promise<void> => {
+  const onExport = async (paper: Paper = 'legal'): Promise<void> => {
     setStatus('building PDF…');
     try {
-      const path = await exportSessionPdf({ lanes, slides, layout });
+      const path = await exportSessionPdf({ lanes, slides, layout, paper });
       setStatus(path ? `saved ${path}` : 'export cancelled');
     } catch (err) {
       setStatus(`export failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -466,10 +564,10 @@ export const App = (): JSX.Element => {
   };
 
   /** The sheet with nothing on it: what a workshop prints and hands out. */
-  const onBlank = async (): Promise<void> => {
+  const onBlank = async (paper: Paper = 'legal'): Promise<void> => {
     setStatus('building the sheet…');
     try {
-      const path = await exportBlankPdf(undefined, layout);
+      const path = await exportBlankPdf(undefined, layout, paper);
       setStatus(path ? `saved ${path}` : 'cancelled');
     } catch (err) {
       setStatus(`failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -740,13 +838,17 @@ export const App = (): JSX.Element => {
     open: () => void onOpen(),
     save: () => void onSave(),
     'export-pdf': () => void onExport(),
-    'export-blank': () => void onBlank(),
+    'export-blank': () => void onBlank('legal'),
+    'export-blank-letter': () => void onBlank('letter'),
     'import-scan': () => void onScan(),
     'import-midi': () => void onMidi(),
     'zoom-in': () => setView((v) => zoomAt(v, 0.5, 0.5)),
     'zoom-out': () => setView((v) => zoomAt(v, 0.5, 2)),
     'zoom-fit': () => setView(FULL),
-    theme: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
+    // The menu's ⌘D steps through whatever the picker offers, so a third theme
+    // joins the cycle by being listed rather than by being special-cased.
+    theme: () =>
+      setTheme((t) => THEMES[(THEMES.findIndex((x) => x.id === t) + 1) % THEMES.length]!.id),
     'pitch-mode': () => setPitchMode((m) => (m === 'hertz' ? 'notes' : 'hertz')),
     'mark-mode': () => setMarkMode((m) => (m === 'dots' ? 'lines' : 'dots')),
     'play-stop': () => void togglePlay(),
@@ -786,16 +888,20 @@ export const App = (): JSX.Element => {
   return (
     <div className="app">
       <header className="bar">
-        <div className="brand">
-          <strong>DAPHNE</strong>
-          <span className="muted">30.000 s · 1 cm = 1 s</span>
-        </div>
-
         <div className="controls">
-          <button className={playing ? 'primary on' : 'primary'} onClick={togglePlay}>
-            {playing ? 'Stop' : 'Play'}
-          </button>
-          <button onClick={rewind}>Rewind</button>
+          <div className="segmented transport" role="group" aria-label="Transport">
+            <button onClick={rewind} title="Back to the start" aria-label="Rewind">
+              <RewindIcon />
+            </button>
+            <button
+              className={playing ? 'primary on' : 'primary'}
+              onClick={togglePlay}
+              title={playing ? 'Pause (space)' : 'Play (space)'}
+              aria-label={playing ? 'Pause' : 'Play'}
+            >
+              {playing ? <PauseIcon /> : <PlayIcon />}
+            </button>
+          </div>
 
           <label>
             Speed
@@ -849,34 +955,7 @@ export const App = (): JSX.Element => {
           <span className="readout">{hz > 0 ? `${hz.toFixed(hz < 100 ? 1 : 0)} Hz` : '—'}</span>
         </div>
 
-        <div className="controls">
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={erasing}
-              onChange={(e) => setErasing(e.target.checked)}
-            />
-            Erase
-          </label>
-          <button
-            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-            title="Switch between light and dark"
-          >
-            {theme === 'dark' ? 'Light' : 'Dark'}
-          </button>
-          {(paper || tonal) && (
-            <label className="toggle" title="Show what the machine reads from the marks">
-              <input
-                type="checkbox"
-                checked={showReading}
-                onChange={(e) => setShowReading(e.target.checked)}
-              />
-              Reading
-            </label>
-          )}
-          <button onClick={onClear} title="Blank strips and fresh slides (⌘N)">
-            Clear
-          </button>
+        <div className="controls right">
           <button onClick={onOpen}>Open</button>
           <button onClick={onSave}>Save</button>
           <MenuButton
@@ -891,15 +970,87 @@ export const App = (): JSX.Element => {
             items={[
               { label: 'Audio (WAV)…', title: 'Render one pass of the sheet', onSelect: () => void onExportWav() },
               { label: 'MIDI…', title: 'Render the sheet and write what it played', onSelect: () => void onExportMidi() },
-              { label: 'Sheet (PDF)…', title: 'This drawing, printed on the sheet', onSelect: () => void onExport() },
-              { label: 'Blank sheet (PDF)…', title: 'A sheet with nothing on it, to hand out', onSelect: () => void onBlank() },
+              {
+                label: 'Current composition (PDF), Legal…',
+                title: 'This drawing, printed on 8.5 x 14 paper',
+                onSelect: () => void onExport('legal'),
+              },
+              {
+                label: 'Current composition (PDF), Letter…',
+                title: 'The same sheet on 8.5 x 11: a whole 30 seconds, drawn smaller',
+                onSelect: () => void onExport('letter'),
+              },
+              {
+                label: 'Blank sheet (PDF), Legal…',
+                title: 'A sheet with nothing on it, to hand out',
+                onSelect: () => void onBlank('legal'),
+              },
+              {
+                label: 'Blank sheet (PDF), Letter…',
+                title: 'The same, on 8.5 x 11',
+                onSelect: () => void onBlank('letter'),
+              },
             ]}
           />
-          <button onClick={() => window.oramics?.toggleProjector()}>Projector</button>
+          <MenuButton
+            className="icon"
+            title="Theme"
+            label={<PaletteIcon />}
+            items={THEMES.map((t) => ({
+              label: t.label,
+              checked: theme === t.id,
+              onSelect: () => setTheme(t.id),
+            }))}
+          />
+          <button
+            className="icon"
+            onClick={() => window.oramics?.toggleProjector()}
+            title="Projector window (⇧⌘P)"
+            aria-label="Projector"
+          >
+            <ProjectorIcon />
+          </button>
         </div>
       </header>
 
-      <section className="fidelity">
+      {/* One row for what the pointer does and what the machine is. */}
+      <section className="tools">
+        <div className="segmented" role="group" aria-label="Tool">
+          <button
+            className={erasing ? 'icon' : 'icon on'}
+            onClick={() => setErasing(false)}
+            title="Draw"
+            aria-label="Draw"
+            aria-pressed={!erasing}
+          >
+            <PencilIcon />
+          </button>
+          <button
+            className={erasing ? 'icon on' : 'icon'}
+            onClick={() => setErasing(true)}
+            title="Erase"
+            aria-label="Erase"
+            aria-pressed={erasing}
+          >
+            <EraserIcon />
+          </button>
+        </div>
+        <button className="icon" onClick={onClear} title="Clear and start again (⌘N)" aria-label="Clear">
+          <TrashIcon />
+        </button>
+
+        {(paper || tonal) && (
+          <label className="toggle" title="Show what the machine reads from the marks">
+            <input
+              type="checkbox"
+              checked={showReading}
+              onChange={(e) => setShowReading(e.target.checked)}
+            />
+            Reading
+          </label>
+        )}
+
+        <span className="divider" aria-hidden="true" />
         <span className="muted">Fidelity</span>
         {(
           [
@@ -1155,27 +1306,17 @@ export const App = (): JSX.Element => {
             <div className="timbre" key={i}>
               <div className="lane-label">
                 <strong>Timbre {i + 1}</strong>
-                <label
-                  className={fidelity.monoSum ? 'pan muted-control' : 'pan'}
+                <PanDot
+                  value={pan[i]!}
+                  onChange={(v) => panTimbre(i, v)}
+                  label={`Pan timbre ${i + 1}`}
+                  dim={fidelity.monoSum}
                   title={
                     fidelity.monoSum
                       ? 'Pan. Mono is on, so this is not heard yet; moving it turns Mono off. Double-click to centre.'
                       : `Pan: ${panLabel(pan[i]!)}. Double-click to centre.`
                   }
-                >
-                  L
-                  <input
-                    type="range"
-                    min={-1}
-                    max={1}
-                    step={0.05}
-                    value={pan[i]}
-                    aria-label={`Pan timbre ${i + 1}`}
-                    onChange={(e) => panTimbre(i, Number(e.target.value))}
-                    onDoubleClick={() => panTimbre(i, 0)}
-                  />
-                  R
-                </label>
+                />
                 <select
                   className="preset"
                   value={presets[i]}

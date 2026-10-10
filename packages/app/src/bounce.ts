@@ -183,9 +183,14 @@ export const encodeWav = (
   right: Float32Array | null = null,
 ): Uint8Array => {
   const channels = right ? 2 : 1;
+  // Finite values only. One stray NaN would make the peak NaN, and with it the
+  // gain, and the whole file would come out silent.
   let peak = 0;
-  for (const v of audio) peak = Math.max(peak, Math.abs(v));
-  if (right) for (const v of right) peak = Math.max(peak, Math.abs(v));
+  const loudest = (buf: Float32Array): void => {
+    for (const v of buf) if (Number.isFinite(v) && Math.abs(v) > peak) peak = Math.abs(v);
+  };
+  loudest(audio);
+  if (right) loudest(right);
   // Both channels by the same amount, so the balance between them survives.
   const gain = peak > 1e-6 ? EXPORT_PEAK / peak : 1;
 
@@ -209,7 +214,11 @@ export const encodeWav = (
   text(36, 'data');
   view.setUint32(40, dataBytes, true);
   const put = (at: number, v: number): void =>
-    view.setInt16(at, Math.round(Math.max(-1, Math.min(1, v * gain)) * 32767), true);
+    view.setInt16(
+      at,
+      Number.isFinite(v) ? Math.round(Math.max(-1, Math.min(1, v * gain)) * 32767) : 0,
+      true,
+    );
   for (let i = 0; i < audio.length; i++) {
     // Interleaved: left then right for each frame.
     put(44 + i * 2 * channels, audio[i]!);

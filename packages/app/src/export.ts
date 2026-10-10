@@ -13,6 +13,7 @@ import {
   type Layout,
   type Overlays,
   type Page,
+  type Paper,
 } from '@oramics/template';
 
 import { LANE_DEFS, SLIDE_HEIGHT, SLIDE_WIDTH, roleFor, type LaneMap } from './lanes.js';
@@ -27,6 +28,8 @@ export interface ExportOptions {
   omitUntouched?: boolean;
   /** Which sheet to print onto. The note-and-octave sheet has pitch in two bands. */
   layout?: Layout;
+  /** Paper to print on. Letter holds the same 30 seconds, drawn smaller. */
+  paper?: Paper;
 }
 
 /**
@@ -76,7 +79,14 @@ export const buildSessionPdf = async (opts: ExportOptions): Promise<Uint8Array> 
   });
 
   const pages: Page[] = [
-    { kind: 'machine', options: { payload: sheetPayload(sheetId, undefined, layout), overlays } },
+    {
+      kind: 'machine',
+      options: {
+        payload: sheetPayload(sheetId, undefined, layout),
+        overlays,
+        paper: opts.paper ?? 'legal',
+      },
+    },
   ];
 
   return buildDocument({ pages, title: `Daphne session — ${sheetId}` });
@@ -88,10 +98,14 @@ export const buildSessionPdf = async (opts: ExportOptions): Promise<Uint8Array> 
  * The same page the app exports a session onto, so a piece drawn on paper and a
  * piece drawn on screen land on identical geometry and import the same way.
  */
-export const buildBlankPdf = async (sheetId?: string, layout: Layout = 'FULL'): Promise<Uint8Array> => {
+export const buildBlankPdf = async (
+  sheetId?: string,
+  layout: Layout = 'FULL',
+  paper: Paper = 'legal',
+): Promise<Uint8Array> => {
   const id = (sheetId ?? makeSheetId()).toUpperCase();
   return buildDocument({
-    pages: [{ kind: 'machine', options: { payload: sheetPayload(id, undefined, layout) } }],
+    pages: [{ kind: 'machine', options: { payload: sheetPayload(id, undefined, layout), paper } }],
     title: `Daphne sheet ${id}`,
   });
 };
@@ -104,8 +118,9 @@ export const exportSessionPdf = async (opts: ExportOptions): Promise<string | nu
 export const exportBlankPdf = async (
   sheetId?: string,
   layout: Layout = 'FULL',
+  paper: Paper = 'legal',
 ): Promise<string | null> =>
   save(
-    await buildBlankPdf(sheetId, layout),
-    layout === 'TONE' ? 'daphne-sheet-notes.pdf' : 'daphne-sheet.pdf',
+    await buildBlankPdf(sheetId, layout, paper),
+    `daphne-sheet${layout === 'TONE' ? '-notes' : ''}${paper === 'letter' ? '-letter' : ''}.pdf`,
   );

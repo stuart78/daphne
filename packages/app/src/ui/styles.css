@@ -62,8 +62,26 @@ body {
   height: 100%;
 }
 
-.bar,
-.fidelity {
+/*
+ * The interface is not a document: dragging across a label should not leave a
+ * blue smear of selected text, and on a drawing surface a stray drag used to
+ * select half the page. Typing still selects inside fields, and the status line
+ * stays selectable because it carries file paths worth copying.
+ */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+select,
+.status {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.bar {
   display: flex;
   align-items: center;
   gap: 18px;
@@ -87,7 +105,7 @@ body {
   row-gap: 8px;
 }
 
-/* Utilities sit right; transport and fidelity stay grouped on the left. */
+/* Utilities sit right; the transport stays on the left. */
 .bar > :last-child {
   margin-left: auto;
 }
@@ -113,22 +131,6 @@ body {
 :root[data-shell='electron'] .bar input,
 :root[data-shell='electron'] .bar label {
   -webkit-app-region: no-drag;
-}
-
-.fidelity {
-  gap: 14px;
-  padding: 7px 16px;
-}
-
-.brand {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  letter-spacing: 0.12em;
-  /* Two more buttons in the header than there used to be. Left to wrap, the
-     caption folds into a three-line block and pushes the whole bar taller. */
-  flex: 0 0 auto;
-  white-space: nowrap;
 }
 
 .bar .controls {
@@ -157,12 +159,22 @@ input[type='range'] {
   accent-color: var(--accent);
 }
 
+/*
+ * One height for every button, whether it holds a word or an icon.
+ * Icons have no line box of their own, so a row of mixed buttons came out
+ * ragged until the height was stated rather than inherited from the text.
+ */
 button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 30px;
   background: var(--control);
   color: var(--ink);
   border: 1px solid var(--control-line);
   border-radius: 5px;
-  padding: 6px 13px;
+  padding: 0 13px;
   font: inherit;
   cursor: pointer;
 }
@@ -417,7 +429,8 @@ button.primary.on {
 }
 
 .segmented button {
-  padding: 2px 9px;
+  padding: 0 9px;
+  min-height: 24px;
   font-size: 11px;
   border-radius: 0;
   color: var(--muted);
@@ -530,27 +543,148 @@ button.primary.on {
   white-space: nowrap;
 }
 
-/* Pan on each timbre: small, since four share a row. */
-.timbre .lane-label .pan {
+/*
+ * Pan: a dot on the stereo field rather than a slider, since what matters is
+ * how far off centre a timbre sits rather than how far along a range it is.
+ */
+.pan-dot {
+  position: relative;
+  width: 58px;
+  height: 20px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.pan-dot.dim {
+  opacity: 0.45;
+}
+
+.pan-dot .field {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 50%;
+  height: 1px;
+  background: var(--control-line);
+}
+
+.pan-dot .centre {
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--control-line);
+}
+
+.pan-dot .dot {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin: -4.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.pan-dot:hover .dot,
+.pan-dot:focus-visible .dot {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.pan-dot:focus-visible {
+  outline: none;
+}
+
+.timbre .lane-label .pan-dot ~ .preset {
+  margin-left: 0;
+}
+
+/* Transport buttons hold an icon rather than a word. */
+.bar .controls button svg {
+  display: block;
+  margin: 0 auto;
+}
+
+/*
+ * The tool bar: what the pointer does, and what the machine is. One row, since
+ * both are settings you reach for while drawing rather than between pieces.
+ */
+.tools {
   display: flex;
   align-items: center;
-  gap: 3px;
-  margin-left: auto;
-  font-size: 10px;
-  color: var(--muted);
+  flex-wrap: wrap;
+  gap: 10px;
+  row-gap: 6px;
+  padding: 6px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
   flex: 0 0 auto;
+  font-size: 12px;
 }
 
-.timbre .lane-label .pan input {
-  width: 56px;
-  accent-color: var(--accent);
+/* A hairline between the tools and the fidelity switches. */
+.tools .divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 0 2px;
+  background: var(--line);
 }
 
-/* Set but not heard: dimmed until Mono is off. */
-.timbre .lane-label .pan.muted-control {
-  opacity: 0.5;
+.tools .status {
+  margin-left: auto;
 }
 
-.timbre .lane-label .pan ~ .preset {
-  margin-left: 0;
+/* A button holding an icon rather than a word: narrower, same height. */
+button.icon {
+  padding: 0 9px;
+  color: var(--ink);
+}
+
+button.icon svg {
+  display: block;
+}
+
+.segmented button.icon.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1a0e08;
+}
+
+/* File and view controls sit to the right of the transport. */
+.bar .controls.right {
+  margin-left: auto;
+}
+
+.menu-list button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.menu-list .tick {
+  width: 10px;
+  color: var(--accent);
+}
+
+/*
+ * The transport: rewind and play as one control rather than two buttons that
+ * happen to sit together.
+ */
+.transport button {
+  min-height: 30px;
+  padding: 0 14px;
+  color: var(--ink);
+}
+
+.transport button.primary {
+  min-width: 58px;
+}
+
+/* The tool bar sits beside full-height buttons, so its toggle matches them. */
+.tools .segmented button {
+  min-height: 30px;
+  font-size: inherit;
 }

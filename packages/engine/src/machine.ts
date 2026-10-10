@@ -56,6 +56,17 @@ export const PITCH_LANE_MAX_HZ = 1000;
  * Only the reading changes. The relays, the servo and everything else that
  * makes it sound like the machine are the same in both.
  */
+/**
+ * Slowest the transport strip will run the heads, as a fraction of normal.
+ *
+ * The clutch on the machine could stop the film dead, and a line drawn at the
+ * bottom rail did exactly that: the piece froze, with no way back until the
+ * line came up again. A sheet is thirty seconds long and a workshop is an
+ * afternoon, so the bottom rail crawls instead. Slow enough to hear as a halt,
+ * fast enough that the piece always comes out the other side.
+ */
+export const TRANSPORT_MIN_RATE = 0.1;
+
 export type PitchMode = 'hertz' | 'notes';
 
 /**
@@ -695,7 +706,9 @@ export class Machine {
       // Applied to the time step, not written onto each lane's speed: that
       // field is the per-lane multiplier, and overwriting it destroyed the
       // ability to run heads at different rates.
-      const drive = this.fidelity.transportLane ? this.lanes.transport.read() * 2 : 1;
+      const drive = this.fidelity.transportLane
+        ? Math.max(TRANSPORT_MIN_RATE, this.lanes.transport.read() * 2)
+        : 1;
       const step = dt * drive;
       for (let l = 0; l < allLanes.length; l++) allLanes[l]!.advance(step);
     }

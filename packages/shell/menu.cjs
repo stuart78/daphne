@@ -34,10 +34,11 @@ const buildMenu = (send) => {
       },
       { label: 'Import MIDI…', accelerator: 'Shift+CmdOrCtrl+M', click: () => send('import-midi') },
       {
-        label: 'Blank Sheet PDF…',
+        label: 'Blank Sheet PDF (Legal)…',
         accelerator: 'Shift+CmdOrCtrl+N',
         click: () => send('export-blank'),
       },
+      { label: 'Blank Sheet PDF (Letter)…', click: () => send('export-blank-letter') },
       { label: 'Export PDF…', accelerator: 'Shift+CmdOrCtrl+E', click: () => send('export-pdf') },
       { label: 'Export Audio…', accelerator: 'Shift+CmdOrCtrl+A', click: () => send('export-wav') },
       { label: 'Export MIDI…', click: () => send('export-midi') },
@@ -58,7 +59,7 @@ const buildMenu = (send) => {
       { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => send('zoom-out') },
       { label: 'Fit Whole Sheet', accelerator: 'CmdOrCtrl+0', click: () => send('zoom-fit') },
       { type: 'separator' },
-      { label: 'Light or Dark', accelerator: 'CmdOrCtrl+D', click: () => send('theme') },
+      { label: 'Next Theme', accelerator: 'CmdOrCtrl+D', click: () => send('theme') },
       { type: 'separator' },
       // Shown for discovery only. The page handles Space itself so that it
       // still types into the key and scale pickers.

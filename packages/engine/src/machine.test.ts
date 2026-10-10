@@ -9,6 +9,7 @@ import {
   OCTAVE_ROWS,
   PITCH_RANGE,
   TIMBRE_COUNT,
+  TRANSPORT_MIN_RATE,
   rowValue,
   unisonRatios,
 } from './machine.js';
@@ -699,4 +700,36 @@ test('clear glass is silent, with no thump as the amplitude comes up', () => {
   m.setSlide(0, Slide.fromField(new Float32Array(64 * 32), 64, 32));
   openVoice(m);
   assert.equal(peak(m.bounce(0.5)), 0);
+});
+
+test('a drawing that stops before the end of the sheet does not poison the output', () => {
+  // A scanned sheet usually ends on blank paper, because the pen comes up
+  // before the right-hand edge. The head clamped on that blank last sample
+  // was handing back NaN, which spread through the mix and out to the file.
+  const m = new Machine({ sampleRate: SR });
+  const stops = Float32Array.from({ length: 128 }, (_, i) => (i < 100 ? 0.5 : Number.NaN));
+  m.lanes.pitch.load(stops, 1);
+  m.lanes.vibrato.load(stops, 1);
+  m.lanes.reverb.load(stops, 1);
+  loadConstant(m.lanes.amp1, 1);
+  for (const lane of Object.values(m.lanes)) lane.loop = false;
+
+  const buf = m.bounce(2);
+  assert.ok([...buf].every(Number.isFinite), 'the output went non-finite past the end of the drawing');
+});
+
+test('the transport strip slows the heads to a crawl but never stops them', () => {
+  // A line at the bottom rail used to be a dead stop, and a piece drawn that
+  // way never reached its end.
+  const m = new Machine({ sampleRate: SR });
+  loadConstant(m.lanes.pitch, 0.5);
+  loadConstant(m.lanes.transport, 0);
+  m.lanes.pitch.loop = false;
+  m.lanes.pitch.load(constant(0.5, 128), 1);
+  m.bounce(0.5);
+  assert.ok(m.lanes.pitch.position > 0, 'the head never moved');
+  assert.ok(
+    Math.abs(m.lanes.pitch.position - 0.5 * TRANSPORT_MIN_RATE) < 0.01,
+    `moved ${m.lanes.pitch.position.toFixed(3)} s in half a second`,
+  );
 });
