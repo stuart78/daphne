@@ -6,7 +6,7 @@ sound, on paper or on screen, and the machine plays what you drew.
 Built for running workshops. Print the sheets, let people draw on them, play the
 results.
 
-**[Download v0.3.0](https://github.com/stuart78/oramics/releases/tag/v0.3.0)**
+**[Download v0.4.0](https://github.com/stuart78/daphne/releases/tag/v0.4.0)**
 for macOS, Windows or Linux. The macOS build is signed and notarised, so it
 opens normally. Windows is unsigned and SmartScreen will warn once.
 

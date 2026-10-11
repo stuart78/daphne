@@ -48,7 +48,7 @@ module.exports = {
   // and nothing caught it, because the app runs fine from source where the file
   // is simply there on disk.
   files: ['*.cjs', 'renderer/**/*', 'package.json'],
-  publish: [{ provider: 'github', owner: 'stuart78', repo: 'oramics' }],
+  publish: [{ provider: 'github', owner: 'stuart78', repo: 'daphne' }],
 
   mac: {
     category: 'public.app-category.music',

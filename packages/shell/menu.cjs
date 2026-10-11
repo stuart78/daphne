@@ -90,7 +90,7 @@ const buildMenu = (send) => {
       submenu: [
         {
           label: 'Daphne on GitHub',
-          click: () => shell.openExternal('https://github.com/stuart78/oramics'),
+          click: () => shell.openExternal('https://github.com/stuart78/daphne'),
         },
       ],
     },
