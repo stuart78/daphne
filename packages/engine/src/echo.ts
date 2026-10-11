@@ -62,9 +62,18 @@ export interface EchoOptions {
   dampHz: number;
 }
 
+/*
+ * Loud enough to be the point.
+ *
+ * At half mix and a third feedback the first repeat came back about ten
+ * decibels under the note and the third was inaudible, which is a hint of an
+ * echo rather than an echo. A tape delay in a studio is mixed to sit alongside
+ * what it repeats, so the wet is near the dry and the line holds on for half a
+ * dozen repeats before it goes.
+ */
 export const DEFAULT_ECHO: EchoOptions = {
-  feedback: 0.35,
-  mix: 0.5,
+  feedback: 0.5,
+  mix: 0.85,
   glideS: 0.08,
   dampHz: 4800,
 };

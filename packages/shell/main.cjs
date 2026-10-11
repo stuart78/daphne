@@ -8,7 +8,7 @@
  * means they stay testable without Electron.
  */
 
-const { app, BrowserWindow, ipcMain, dialog, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, nativeTheme, screen } = require('electron');
 const fs = require('node:fs');
 const { readFile, rename, writeFile } = require('node:fs/promises');
 const path = require('node:path');
@@ -26,6 +26,43 @@ const RENDERER_DIR = fs.existsSync(STAGED) ? STAGED : path.join(__dirname, '../a
 let editorWindow = null;
 /** @type {BrowserWindow | null} */
 let projectorWindow = null;
+
+/**
+ * The colour the window is painted before the page has loaded.
+ *
+ * Electron fills the frame with this the moment the window appears, so a dark
+ * value on a light desktop is a flash of the wrong theme every launch.
+ *
+ * There are more themes than there are system preferences, so the renderer
+ * tells us the colour it settled on and we keep it in a one-line file. Without
+ * one — a fresh install — the system preference is the better guess, which is
+ * also what the renderer starts from.
+ */
+const colourPath = () => path.join(app.getPath('userData'), 'window-colour');
+
+const windowBackground = () => {
+  try {
+    const kept = fs.readFileSync(colourPath(), 'utf8').trim();
+    if (/^#[0-9a-f]{6}$/i.test(kept)) return kept;
+  } catch {
+    // No file yet, or it cannot be read. Fall through to the system preference.
+  }
+  return nativeTheme.shouldUseDarkColors ? '#0a090c' : '#f4f2ee';
+};
+
+ipcMain.on('oramics:window-colour', (_event, colour) => {
+  // A colour and nothing else: this string is written to disk and handed back
+  // to Electron on the next launch.
+  if (typeof colour !== 'string' || !/^#[0-9a-f]{6}$/i.test(colour)) return;
+  try {
+    fs.writeFileSync(colourPath(), colour, 'utf8');
+  } catch (err) {
+    console.error('could not keep the window colour', err);
+  }
+});
+
+/** The projector has no light theme; see projector.tsx. */
+const PROJECTOR_BACKGROUND = '#08070a';
 
 const baseWebPreferences = {
   preload: path.join(__dirname, 'preload.cjs'),
@@ -46,7 +83,7 @@ const createEditorWindow = () => {
     height: 940,
     minWidth: 1040,
     minHeight: 640,
-    backgroundColor: '#0a090c',
+    backgroundColor: windowBackground(),
     title: 'Daphne',
     titleBarStyle: 'hiddenInset',
     webPreferences: baseWebPreferences,
@@ -80,7 +117,8 @@ const createProjectorWindow = () => {
     width: bounds.width,
     height: bounds.height,
     fullscreen: Boolean(target),
-    backgroundColor: '#0a090c',
+    // The projector is always dark: it is pointed at a wall in a dim room.
+    backgroundColor: PROJECTOR_BACKGROUND,
     title: 'Daphne — Projector',
     webPreferences: baseWebPreferences,
   });

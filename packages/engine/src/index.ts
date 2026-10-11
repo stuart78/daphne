@@ -61,6 +61,8 @@ export {
   type VibratoMode,
   type Unison,
   MAX_UNISON_VOICES,
+  MAX_TIMBRE_OCTAVES,
+  MAX_SLIP,
   unisonRatios,
   PITCH_RANGE,
   TRANSPORT_MIN_RATE,

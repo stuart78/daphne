@@ -296,11 +296,34 @@ const runsInColumn = (
  * printed filled, the core is the drawn boundary and the wash below it is not,
  * so the same rule reads both without knowing which it is looking at.
  */
-const positionOf = (runs: Run[], mask: [number, number][], minMarkMm: number): number => {
+const positionOf = (
+  runs: Run[],
+  mask: [number, number][],
+  minMarkMm: number,
+  interior?: { top: number; bottom: number },
+): number => {
+  /*
+   * A sliver hugging the frame is the frame.
+   *
+   * The band's border is printed at full ink weight just outside the sampled
+   * area, and on a photograph it blurs across the line: where the paper bows a
+   * little more than the drift correction caught, a hair of it reaches inside.
+   * Taken for a mark it reads as full amplitude for a few columns, which is the
+   * spike that appears over a drawn line that is nowhere near the top. A stroke
+   * genuinely drawn against the rail is as thick as the pen that drew it, so
+   * thinness is what separates them.
+   */
+  const CLIPPED_MM = 0.55;
+  const edge = (run: Run): boolean =>
+    interior !== undefined &&
+    run.bottom - run.top < CLIPPED_MM &&
+    (run.top <= interior.top + 0.05 || run.bottom >= interior.bottom - 0.05);
+
   let best: Run | null = null;
   for (const run of runs) {
     if (run.bottom - run.top < minMarkMm) continue; // speckle
     if (isFurniture(mask, run)) continue;
+    if (edge(run)) continue;
     if (!best || run.top < best.top) best = run;
   }
   if (!best) return Number.NaN;
@@ -714,7 +737,10 @@ export const readRegion = (
     const toValue = (mm: number): number => 1 - (mm - top) / (bottom - top);
     masks.push(mask.map(([a, b]) => [toValue(b), toValue(a)] as [number, number]));
 
-    const y = positionOf(runsInColumn(ink, toImage, interior, x, step), mask, minMark);
+    const y = positionOf(runsInColumn(ink, toImage, interior, x, step), mask, minMark, {
+      top: interior.y,
+      bottom: interior.y + interior.h,
+    });
     out[i] = Number.isNaN(y) ? Number.NaN : 1 - (y - top) / (bottom - top);
   }
   despeckle(out);

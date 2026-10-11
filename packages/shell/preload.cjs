@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('oramics', {
   autosave: (text) => ipcRenderer.invoke('oramics:autosave', text),
   autosaveNow: (text) => ipcRenderer.sendSync('oramics:autosave-sync', text),
   restore: () => ipcRenderer.invoke('oramics:restore'),
+  rememberBackground: (colour) => ipcRenderer.send('oramics:window-colour', colour),
 
   // Editor to projector, relayed by main.
   projectorPost: (message) => ipcRenderer.send('oramics:projector', message),

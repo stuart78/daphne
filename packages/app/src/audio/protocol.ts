@@ -18,6 +18,8 @@ export type EngineMessage =
   | { type: 'scanWindow'; index: number; low: number; high: number }
   | { type: 'unison'; index: number; unison: Unison }
   | { type: 'pan'; index: number; value: number }
+  | { type: 'timbreOctave'; index: number; octaves: number }
+  | { type: 'slip'; index: number; amount: number }
   | { type: 'vibratoMode'; mode: VibratoMode }
   | { type: 'echoFeedback'; value: number }
   | { type: 'reverbSpace'; space: ReverbSpace }
@@ -26,7 +28,11 @@ export type EngineMessage =
   | { type: 'laneSpeed'; name: LaneName; value: number }
   | { type: 'vibratoDepth'; cents: number }
   | { type: 'pitchMode'; mode: PitchMode }
-  | { type: 'transport'; playing: boolean; rewind?: boolean };
+  /**
+   * `playing` false pauses: the heads hold and the tails ring out. `stop`
+   * silences everything at once. `rewind` puts the heads back to the start.
+   */
+  | { type: 'transport'; playing: boolean; rewind?: boolean; stop?: boolean };
 
 export interface MeterMessage {
   type: 'meters';

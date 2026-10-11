@@ -71,8 +71,10 @@ jobs:
       # Notarising is a round trip to Apple and can take a few minutes. Worth
       # confirming rather than assuming, since an unnotarised build looks
       # identical until someone else opens it.
+      # Matched on the name, not the image: the runner is pinned, so a check
+      # written against macos-latest quietly stopped running.
       - name: Check the macOS build is signed and stapled
-        if: matrix.os == 'macos-latest'
+        if: matrix.name == 'macOS'
         run: |
           APP="packages/shell/release/mac-arm64/Daphne.app"
           [ -d "$APP" ] || APP="packages/shell/release/mac/Daphne.app"

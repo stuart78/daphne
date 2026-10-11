@@ -733,3 +733,89 @@ test('the transport strip slows the heads to a crawl but never stops them', () =
     `moved ${m.lanes.pitch.position.toFixed(3)} s in half a second`,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Pause and stop
+// ---------------------------------------------------------------------------
+
+/** A voice sounding into a wet plate, so there is a tail to listen for. */
+const ringing = (): Machine => {
+  const m = new Machine({ sampleRate: SR });
+  openVoice(m);
+  loadConstant(m.lanes.reverb, 1);
+  m.bounce(0.5);
+  return m;
+};
+
+test('pausing holds the heads but lets the sound ring out', () => {
+  const m = ringing();
+  const at = m.lanes.pitch.position;
+  m.setPaused(true);
+
+  const justAfter = m.bounce(0.05);
+  assert.ok(peak(justAfter) > 0.001, 'the sound was cut off rather than left to ring');
+  assert.equal(m.lanes.pitch.position, at, 'the head moved while paused');
+
+  // And it does die away: this is a tail, not a sustain.
+  const later = m.bounce(4);
+  assert.ok(peak(later.subarray(later.length - 1000)) < peak(justAfter) / 20, 'the tail never faded');
+});
+
+test('stopping silences everything at once, leaving the head where it was', () => {
+  const m = ringing();
+  const at = m.lanes.pitch.position;
+  m.setPaused(true);
+  m.silence();
+
+  assert.equal(peak(m.bounce(0.05)), 0, 'something was still sounding after a stop');
+  assert.equal(m.lanes.pitch.position, at, 'stopping moved the head');
+});
+
+test('a timbre can sit an octave or two off the note', () => {
+  const measure = (octaves: number): number => {
+    const m = new Machine({
+      sampleRate: SR,
+      fidelity: { opticalAmplitude: false, relayLag: false, servoScanner: false },
+    });
+    openVoice(m);
+    m.setTimbreOctave(0, octaves);
+    m.bounce(0.2);
+    return measureHz(m.bounce(0.5), SR);
+  };
+
+  const base = measure(0);
+  assert.ok(Math.abs(measure(1) / base - 2) < 0.02, `up an octave gave ${measure(1) / base}x`);
+  assert.ok(Math.abs(measure(-1) / base - 0.5) < 0.02, `down an octave gave ${measure(-1) / base}x`);
+  assert.ok(Math.abs(measure(2) / base - 4) < 0.05, 'two octaves up should be four times the pitch');
+  // The strips still play one note: the meter follows the note, not the timbre.
+  assert.ok(Math.abs(measure(5) / base - 4) < 0.05, 'beyond two octaves it stops at two');
+});
+
+test('slip makes a timbre wander, and no slip keeps it steady', () => {
+  const play = (slip: number): Float32Array => {
+    const m = new Machine({
+      sampleRate: SR,
+      fidelity: { opticalAmplitude: false, relayLag: false, servoScanner: false },
+    });
+    openVoice(m);
+    m.setSlip(0, slip);
+    m.bounce(0.2);
+    return m.bounce(3);
+  };
+
+  /** Frequency measured a window at a time, so a wander shows up as spread. */
+  const spread = (buf: Float32Array): number => {
+    const window = Math.round(SR * 0.25);
+    const seen: number[] = [];
+    for (let i = 0; i + window <= buf.length; i += window) {
+      seen.push(measureHz(buf.subarray(i, i + window), SR));
+    }
+    return (Math.max(...seen) - Math.min(...seen)) / seen[0]!;
+  };
+
+  const steady = spread(play(0));
+  const wandering = spread(play(1));
+  assert.ok(steady < 0.002, `a steady timbre drifted by ${(steady * 100).toFixed(2)}%`);
+  assert.ok(wandering > steady * 5, `slip only moved it by ${(wandering * 100).toFixed(2)}%`);
+  assert.ok(wandering < 0.1, `slip moved it ${(wandering * 100).toFixed(1)}%, which is detuning`);
+});

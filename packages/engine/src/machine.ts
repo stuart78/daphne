@@ -136,11 +136,6 @@ export interface Fidelity {
    * lag, loss of lock or pitch-dependent smearing.
    */
   servoScanner: boolean;
-  /**
-   * Let the transport strip drive the read heads. Strip 10 did exactly this,
-   * and because the strip is itself read by a head it warps its own time axis.
-   */
-  transportLane: boolean;
 }
 
 export const FAITHFUL: Fidelity = {
@@ -150,7 +145,6 @@ export const FAITHFUL: Fidelity = {
   opticalAmplitude: true,
   monoSum: true,
   servoScanner: true,
-  transportLane: true,
 };
 
 export interface MachineOptions {
@@ -180,6 +174,23 @@ export interface Unison {
 }
 
 export const MAX_UNISON_VOICES = 7;
+
+/** How far a timbre can be moved from the note being played, in octaves. */
+export const MAX_TIMBRE_OCTAVES = 2;
+
+/**
+ * Slip: how far a timbre's own clock wanders, as a fraction of its rate.
+ *
+ * Four slides driven from one pitch sit exactly on top of each other, which is
+ * tidier than any tape machine ever managed. Slip gives each one a clock of its
+ * own that drifts: a slow random walk, no faster than a hand moving, so the
+ * voices wander apart and back the way four tape loops do. At full it is a few
+ * per cent, which is wow rather than detuning.
+ */
+export const MAX_SLIP = 0.035;
+
+/** How quickly the wander changes direction, in Hertz. */
+const SLIP_RATE_HZ = 0.6;
 
 /** The extra voices' tunings: spread evenly across the range, leaving out the one nearest the original. */
 export const unisonRatios = ({ voices, cents }: Unison): number[] => {
@@ -253,6 +264,28 @@ export class Machine {
   private scanners: FlyingSpotScanner[];
   private windows: ScanWindow[];
   private unison: UnisonVoices[];
+  /**
+   * A timbre's own tuning, as a frequency ratio.
+   *
+   * The machine had one pitch for the whole voice: four slides, one note. This
+   * lets a timbre sit an octave or two off it, which is four oscillators on one
+   * strip rather than one. Not the machine, and useful.
+   */
+  private octaveRatio = new Float32Array(TIMBRE_COUNT).fill(1);
+  /**
+   * A phase per timbre, for the wavetable path.
+   *
+   * That path takes its pitch from how fast the phase turns rather than from
+   * the frequency handed to it, so one shared phase meant every timbre sounded
+   * at the note however it was tuned.
+   */
+  private timbrePhase = new Float64Array(TIMBRE_COUNT);
+  /** Slip per timbre: how much, where the wander is now, and where it is heading. */
+  private slip = new Float32Array(TIMBRE_COUNT);
+  private slipAt = new Float32Array(TIMBRE_COUNT);
+  private slipTo = new Float32Array(TIMBRE_COUNT);
+  private slipLeft = new Float32Array(TIMBRE_COUNT);
+  private slipSpan = new Float32Array(TIMBRE_COUNT).fill(1);
   private scannerOpts: ScannerOptions;
   private amps: AmplitudeStage[];
   /**
@@ -276,6 +309,12 @@ export class Machine {
   private reverbSpace: ReverbSpace = 'plate';
   private readonly echo: Echo;
   private vibratoMode: VibratoMode = 'vibrato';
+  /**
+   * Paused: the heads stop and nothing new is sounded, but the plate, the echo
+   * and the light bulbs carry on as they would. Stopping a tape leaves the room
+   * ringing; only pulling the plug does not.
+   */
+  private paused = false;
   /** Scratch for the echo's two channels, so the render loop allocates nothing. */
   private readonly echoOut: [number, number] = [0, 0];
   /**
@@ -421,6 +460,24 @@ export class Machine {
     return table;
   }
 
+  /** How far this timbre's clock is allowed to wander, 0 to 1. */
+  setSlip(index: number, amount: number): void {
+    this.assertTimbre(index);
+    this.slip[index] = Math.max(0, Math.min(1, amount));
+    if (this.slip[index] === 0) {
+      this.slipAt[index] = 0;
+      this.slipTo[index] = 0;
+      this.slipLeft[index] = 0;
+    }
+  }
+
+  /** Move a timbre up or down, in octaves. Fractions are allowed; the range is not. */
+  setTimbreOctave(index: number, octaves: number): void {
+    this.assertTimbre(index);
+    const clamped = Math.max(-MAX_TIMBRE_OCTAVES, Math.min(MAX_TIMBRE_OCTAVES, octaves));
+    this.octaveRatio[index] = 2 ** clamped;
+  }
+
   /** Narrow a timbre to one ribbon of a slide that carries several. */
   setScanWindow(index: number, window: ScanWindow): void {
     this.assertTimbre(index);
@@ -492,6 +549,30 @@ export class Machine {
     this.echo.setOptions(opts);
   }
 
+  /** Hold the heads where they are, without cutting what is still sounding. */
+  setPaused(paused: boolean): void {
+    this.paused = paused;
+  }
+
+  get isPaused(): boolean {
+    return this.paused;
+  }
+
+  /**
+   * Everything quiet, now: the tank emptied, the echo wiped, the attenuators
+   * closed. The heads stay where they are, since where you were is not what
+   * you asked to silence.
+   */
+  silence(): void {
+    this.plate.clear();
+    this.echo.clear();
+    for (const a of this.amps) a.reset();
+    this.dcX = 0;
+    this.dcY = 0;
+    this.dcXR = 0;
+    this.dcYR = 0;
+  }
+
   reset(): void {
     this.phase = 0;
     for (const lane of this.allLanes) lane.reset();
@@ -502,6 +583,10 @@ export class Machine {
       for (const s of u.scanners) s.reset();
       u.phases.fill(0);
     }
+    this.timbrePhase.fill(0);
+    this.slipAt.fill(0);
+    this.slipTo.fill(0);
+    this.slipLeft.fill(0);
     this.fadeLeft.fill(0);
     this.relays.reset();
     this.plate.clear();
@@ -605,7 +690,32 @@ export class Machine {
       let sumR = 0;
       for (let t = 0; t < TIMBRE_COUNT; t++) {
         let voice = 0;
-        const gain = this.amps[t]!.process(ampLanes[t]!.read());
+        // Paused, the strips are not driving anything: the attenuators close at
+        // their own pace, which is what makes a pause fade rather than cut.
+        const level = this.paused ? 0 : ampLanes[t]!.read();
+        /*
+         * Where this timbre sits against the note the strips are playing, and
+         * how far its own clock has wandered. The wander is a walk between
+         * randomly chosen points rather than noise, so it drifts rather than
+         * shivers.
+         */
+        if (this.slip[t]! > 0) {
+          if (this.slipLeft[t]! <= 0) {
+            this.slipAt[t] = this.slipTo[t]!;
+            this.slipTo[t] = (Math.random() * 2 - 1) * this.slip[t]! * MAX_SLIP;
+            this.slipLeft[t] = this.sampleRate / SLIP_RATE_HZ;
+            this.slipSpan[t] = this.slipLeft[t]!;
+          }
+          this.slipLeft[t]!--;
+        }
+        const wander =
+          this.slip[t]! > 0
+            ? this.slipAt[t]! +
+              (this.slipTo[t]! - this.slipAt[t]!) *
+                (1 - this.slipLeft[t]! / this.slipSpan[t]!)
+            : 0;
+        const voiceHz = hz * this.octaveRatio[t]! * (1 + wander);
+        const gain = this.amps[t]!.process(level);
         this.meters.gains[t] = gain;
 
         if (this.fidelity.servoScanner) {
@@ -614,11 +724,11 @@ export class Machine {
           // timbre depend on how long the previous silence was.
           const w = this.windows[t]!;
           const slide = this.slides[t]!;
-          let spot = this.scanners[t]!.step(slide, hz, w.low, w.high);
+          let spot = this.scanners[t]!.step(slide, voiceHz, w.low, w.high);
           if (this.fadeLeft[t]! > 0) {
             const outgoing = this.previousScanners[t]!.step(
               this.previousSlides[t]!,
-              hz,
+              voiceHz,
               w.low,
               w.high,
             );
@@ -631,7 +741,7 @@ export class Machine {
             // Stepped even when silent, like the original, for the same reason.
             let voices = spot;
             for (let k = 0; k < u.ratios.length; k++) {
-              voices += u.scanners[k]!.step(this.slides[t]!, hz * u.ratios[k]!, w.low, w.high);
+              voices += u.scanners[k]!.step(this.slides[t]!, voiceHz * u.ratios[k]!, w.low, w.high);
             }
             spot = voices * u.norm;
           }
@@ -641,16 +751,18 @@ export class Machine {
           const u = this.unison[t]!;
           if (gain > 0) {
             const table = this.wavetableFor(t);
-            let voices = table.sample(this.phase, hz, this.sampleRate);
+            let voices = table.sample(this.timbrePhase[t]!, voiceHz, this.sampleRate);
             for (let k = 0; k < u.ratios.length; k++) {
-              voices += table.sample(u.phases[k]!, hz * u.ratios[k]!, this.sampleRate);
+              voices += table.sample(u.phases[k]!, voiceHz * u.ratios[k]!, this.sampleRate);
             }
             voice = (u.ratios.length > 0 ? voices * u.norm : voices) * gain;
           }
           for (let k = 0; k < u.ratios.length; k++) {
-            const p = u.phases[k]! + (hz * u.ratios[k]!) / this.sampleRate;
+            const p = u.phases[k]! + (voiceHz * u.ratios[k]!) / this.sampleRate;
             u.phases[k] = p - Math.floor(p);
           }
+          const turned = this.timbrePhase[t]! + voiceHz / this.sampleRate;
+          this.timbrePhase[t] = turned - Math.floor(turned);
         }
         sum += voice;
         sumL += voice * panL[t]!;
@@ -706,10 +818,10 @@ export class Machine {
       // Applied to the time step, not written onto each lane's speed: that
       // field is the per-lane multiplier, and overwriting it destroyed the
       // ability to run heads at different rates.
-      const drive = this.fidelity.transportLane
-        ? Math.max(TRANSPORT_MIN_RATE, this.lanes.transport.read() * 2)
-        : 1;
-      const step = dt * drive;
+      // Strip 10 drives the clutch, always: a blank strip rests at the centre
+      // line, which is normal speed, so there is nothing to switch off.
+      const drive = Math.max(TRANSPORT_MIN_RATE, this.lanes.transport.read() * 2);
+      const step = this.paused ? 0 : dt * drive;
       for (let l = 0; l < allLanes.length; l++) allLanes[l]!.advance(step);
     }
   }

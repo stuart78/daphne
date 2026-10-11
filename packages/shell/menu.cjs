@@ -64,11 +64,12 @@ const buildMenu = (send) => {
       // Shown for discovery only. The page handles Space itself so that it
       // still types into the key and scale pickers.
       {
-        label: 'Play or Stop',
+        label: 'Play or Pause',
         accelerator: 'Space',
         registerAccelerator: false,
         click: () => send('play-stop'),
       },
+      { label: 'Stop', accelerator: 'Shift+Space', registerAccelerator: false, click: () => send('stop') },
       { label: 'Pitch in Hertz or Notes', accelerator: 'Shift+CmdOrCtrl+H', click: () => send('pitch-mode') },
       { label: 'Notes as Dots or Lines', accelerator: 'Shift+CmdOrCtrl+L', click: () => send('mark-mode') },
       { type: 'separator' },

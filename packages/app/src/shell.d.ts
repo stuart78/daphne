@@ -14,6 +14,8 @@ export interface OramicsShell {
   autosaveNow: (text: string) => void;
   /** The session kept from last time, or null. */
   restore: () => Promise<string | null>;
+  /** The colour to paint the window before the page loads next launch. */
+  rememberBackground: (colour: string) => void;
   /** Send to the projector window, if it is open. */
   projectorPost: (message: unknown) => void;
   /** In the projector: receive from the editor, asking for everything first. */
@@ -38,6 +40,7 @@ export type ShellCommand =
   | 'pitch-mode'
   | 'mark-mode'
   | 'play-stop'
+  | 'stop'
   | 'export-wav'
   | 'export-midi'
   | 'projector-ready'

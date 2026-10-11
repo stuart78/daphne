@@ -42,6 +42,10 @@ export interface BounceInput {
   unison?: Unison[];
   /** Pan per timbre. Heard only with `fidelity.monoSum` off, which also makes the file stereo. */
   pan?: number[];
+  /** How far each timbre sits from the note, in octaves. */
+  octaves?: number[];
+  /** How far each timbre's clock wanders, 0 to 1. */
+  slip?: number[];
   /** What the vibrato strip drives. */
   vibratoMode?: VibratoMode;
   echoFeedback?: number;
@@ -95,6 +99,12 @@ export const bounce = (input: BounceInput, onProgress?: (fraction: number) => vo
   });
   input.pan?.forEach((p, i) => {
     if (i < TIMBRE_COUNT) machine.setPan(i, p);
+  });
+  input.octaves?.forEach((o, i) => {
+    if (i < TIMBRE_COUNT) machine.setTimbreOctave(i, o);
+  });
+  input.slip?.forEach((amount, i) => {
+    if (i < TIMBRE_COUNT) machine.setSlip(i, amount);
   });
   const stereo = !input.fidelity.monoSum;
   machine.setGlobalSpeed(input.globalSpeed);

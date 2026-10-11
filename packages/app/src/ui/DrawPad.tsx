@@ -31,6 +31,8 @@ export interface DrawPadProps {
   guides?: number[];
   /** Wipe columns back to blank instead of drawing on them. */
   erasing?: boolean;
+  /** Freehand, or one of the two-point tools. */
+  tool?: Tool;
   /** Only a repaint trigger — the colours come from the CSS tokens. */
   theme?: string;
   /**
@@ -75,6 +77,21 @@ export interface Rows {
   active?: (row: number) => boolean;
 }
 
+/**
+ * What the pointer does on a lane.
+ *
+ * `draw` and `erase` are freehand. `line`, `curve` and `arc` are two-point
+ * tools: press where the mark starts, release where it ends, and what is
+ * between is worked out rather than drawn by hand. A line is the shortest way
+ * between two values; a curve eases out of the first and into the second, which
+ * is what a hand drawing a swell does and what an amplitude usually wants; an
+ * arc is the exponential between them.
+ */
+export type Tool = 'draw' | 'line' | 'curve' | 'arc' | 'erase';
+
+/** Angles a held shift snaps to. Sixteen of them around the circle. */
+const SNAP_RADIANS = Math.PI / 8;
+
 /** Ink weight. Thick enough to read across a room on the projector. */
 const INK_WIDTH = 3;
 
@@ -99,6 +116,7 @@ export const DrawPad = ({
   height,
   guides = [],
   erasing = false,
+  tool = 'draw',
   theme = 'dark',
   backdrop = null,
   showReading = true,
@@ -114,6 +132,9 @@ export const DrawPad = ({
   const drawing = useRef(false);
   const lastIndex = useRef<number | null>(null);
   const strokeId = useRef(0);
+  /** Where a two-point mark was started, and where the pointer is now. */
+  const anchor = useRef<{ index: number; value: number } | null>(null);
+  const pending = useRef<{ from: number; to: number; at: (i: number) => number } | null>(null);
   // Held in a ref so the render loop always sees the newest arrays without
   // re-subscribing every stroke.
   const trackRef = useRef(track);
@@ -366,6 +387,26 @@ export const DrawPad = ({
       ctx.setLineDash([]);
     }
 
+    /*
+     * The mark being placed, before the pointer comes up. Dashed, because it is
+     * a proposal: nothing has been written to the lane yet.
+     */
+    const preview = pending.current;
+    if (preview) {
+      ctx.strokeStyle = pal.accent;
+      ctx.lineWidth = INK_WIDTH;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      for (let i = preview.from; i <= preview.to; i++) {
+        const px = toX(i);
+        const py = toY(Math.max(0, Math.min(1, preview.at(i))));
+        if (i === preview.from) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     if (rows) {
       // Named at both edges, so nobody counts rows up from the bottom.
       const rowH = h / rows.count;
@@ -408,6 +449,109 @@ export const DrawPad = ({
     const local = (clientX - rect.left) / rect.width;
     const { from, to } = viewRef.current;
     return from + local * (to - from);
+  };
+
+  /** Pointer to a column and a value, in the lane's own terms. */
+  const pointAt = (event: React.PointerEvent<HTMLCanvasElement>): { index: number; value: number } => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const n = trackRef.current.values.length;
+    return {
+      index: Math.max(0, Math.min(n - 1, Math.round(sheetAt(event.clientX, rect) * (n - 1)))),
+      value: Math.max(0, Math.min(1, 1 - (event.clientY - rect.top) / rect.height)),
+    };
+  };
+
+  /*
+   * Where a two-point mark ends, with shift snapping the angle.
+   *
+   * Snapped in pixels rather than in values, because the angle anyone is aiming
+   * for is the one they can see: a lane is wide and short, so the same pair of
+   * numbers is a gentle slope on screen and a cliff in the data.
+   */
+  const endPoint = (
+    event: React.PointerEvent<HTMLCanvasElement>,
+    start: { index: number; value: number },
+  ): { index: number; value: number } => {
+    if (!event.shiftKey) return pointAt(event);
+
+    const canvas = canvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    const n = trackRef.current.values.length;
+    const span = viewRef.current.to - viewRef.current.from;
+    const toX = (index: number): number =>
+      ((index / (n - 1) - viewRef.current.from) / span) * rect.width;
+    const toY = (value: number): number => (1 - value) * rect.height;
+
+    /*
+     * Measured from where the pointer actually is, not from where it would sit
+     * once clamped into the lane. A lane is short: drag much above it and the
+     * clamped point is a shallower angle than the one being aimed for, so the
+     * line would snap to the wrong one of the sixteen.
+     */
+    const dx = event.clientX - rect.left - toX(start.index);
+    const dy = event.clientY - rect.top - toY(start.value);
+    const length = Math.hypot(dx, dy);
+    if (length < 1) return start;
+
+    const angle = Math.round(Math.atan2(dy, dx) / SNAP_RADIANS) * SNAP_RADIANS;
+    const x = toX(start.index) + Math.cos(angle) * length;
+    const y = toY(start.value) + Math.sin(angle) * length;
+    return {
+      index: Math.max(
+        0,
+        Math.min(n - 1, Math.round((viewRef.current.from + (x / rect.width) * span) * (n - 1))),
+      ),
+      value: Math.max(0, Math.min(1, 1 - y / rect.height)),
+    };
+  };
+
+  /**
+   * A straight run, one that eases out of the first value and into the second,
+   * or the exponential between them.
+   *
+   * The arc is interpolated in the log domain rather than bent by a fixed
+   * amount, so it is the curve a loudness actually follows: equal steps in
+   * decibels, steep where the line is loud and flattening as it approaches
+   * silence. That makes it bend towards the quieter end whichever way it is
+   * drawn, which is the one thing a hand expects of an exponential.
+   */
+  const between = (
+    start: { index: number; value: number },
+    end: { index: number; value: number },
+  ): { from: number; to: number; at: (i: number) => number } => {
+    const from = Math.min(start.index, end.index);
+    const to = Math.max(start.index, end.index);
+    const reversed = end.index < start.index;
+    const a = reversed ? end.value : start.value;
+    const b = reversed ? start.value : end.value;
+    // The bottom of the band as a ratio, so an end at zero still has a log.
+    const floor = 0.002;
+    const logA = Math.log(Math.max(a, floor));
+    const logB = Math.log(Math.max(b, floor));
+    return {
+      from,
+      to,
+      at: (i: number) => {
+        if (to === from) return b;
+        const t = (i - from) / (to - from);
+        if (tool === 'arc') return Math.exp(logA + (logB - logA) * t);
+        const eased = tool === 'curve' ? t * t * (3 - 2 * t) : t;
+        return a + (b - a) * eased;
+      },
+    };
+  };
+
+  /** Lay a worked-out run down as one mark. */
+  const commit = (run: { from: number; to: number; at: (i: number) => number }): void => {
+    const values = new Float32Array(trackRef.current.values);
+    const strokes = new Int32Array(trackRef.current.strokes);
+    for (let i = run.from; i <= run.to; i++) {
+      values[i] = Math.max(0, Math.min(1, run.at(i)));
+      strokes[i] = strokeId.current;
+    }
+    const next = { values, strokes };
+    trackRef.current = next;
+    onChange(next);
   };
 
   const write = (event: React.PointerEvent<HTMLCanvasElement>): void => {
@@ -465,13 +609,18 @@ export const DrawPad = ({
     onChange(next);
   };
 
+  /** The tools that are placed rather than drawn. */
+  const twoPoint = tool === 'line' || tool === 'curve' || tool === 'arc';
+
   useViewWheel(canvasRef, viewRef, onViewChange);
 
   return (
     <canvas
       ref={canvasRef}
       className="drawpad"
-      style={{ height, opacity: disabled ? 0.45 : 1 }}
+      // Only set when it applies, so a lane can dim itself from the stylesheet
+      // without fighting an inline value.
+      style={disabled ? { height, opacity: 0.45 } : { height }}
       onPointerDown={(e) => {
         if (disabled) return;
         drawing.current = true;
@@ -479,19 +628,43 @@ export const DrawPad = ({
         // A fresh id, so this mark stays separate from whatever it lands on.
         strokeId.current = nextStrokeId(trackRef.current.strokes);
         e.currentTarget.setPointerCapture(e.pointerId);
-        write(e);
+        if (twoPoint) {
+          // Nothing is written until the pointer comes up: the mark is a
+          // proposal you can still aim.
+          anchor.current = pointAt(e);
+          pending.current = between(anchor.current, anchor.current);
+          paint();
+        } else {
+          write(e);
+        }
       }}
       onPointerMove={(e) => {
-        if (drawing.current) write(e);
+        if (!drawing.current) return;
+        if (twoPoint) {
+          const start = anchor.current;
+          if (!start) return;
+          pending.current = between(start, endPoint(e, start));
+          paint();
+        } else {
+          write(e);
+        }
       }}
       onPointerUp={(e) => {
         drawing.current = false;
         lastIndex.current = null;
+        if (twoPoint && anchor.current) {
+          commit(between(anchor.current, endPoint(e, anchor.current)));
+          anchor.current = null;
+          pending.current = null;
+        }
         e.currentTarget.releasePointerCapture(e.pointerId);
       }}
       onPointerCancel={() => {
         drawing.current = false;
         lastIndex.current = null;
+        anchor.current = null;
+        pending.current = null;
+        paint();
       }}
     />
   );

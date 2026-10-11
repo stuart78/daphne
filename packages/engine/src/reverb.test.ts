@@ -168,9 +168,11 @@ test('a held lane rests at its default until something has been drawn', () => {
   assert.equal(lane.read(), 0.5);
 });
 
-test('turning the transport strip off restores plain speed', () => {
-  const m = voiced({ transportLane: false });
-  m.lanes.transport.load(constant(1), 30); // would be double speed if wired
+test('a strip left blank runs at plain speed', () => {
+  // There is no switch for this: an undrawn strip rests on its centre line,
+  // and the centre line is normal speed.
+  const m = voiced();
+  m.lanes.transport.load(new Float32Array(64).fill(Number.NaN), 30);
   m.bounce(0.5);
   assert.ok(
     Math.abs(m.lanes.amp1.position - 0.5) < 0.02,

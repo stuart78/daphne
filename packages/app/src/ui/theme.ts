@@ -14,20 +14,45 @@
  * so there is nothing to flash.
  */
 
-export type Theme = 'light' | 'dark';
+export type Theme = 'light' | 'sepia' | 'blueprint' | 'dark' | 'midnight' | 'phosphor';
 
 /**
- * The themes on offer, in the order the picker lists them. Adding one means a
- * palette in styles.css under `:root[data-theme="..."]` and an entry here.
+ * The themes on offer, in the order the picker lists them: the light ones, then
+ * the dark. Adding one means a palette in styles.css under
+ * `:root[data-theme="..."]` and an entry here.
  */
-export const THEMES: { id: Theme; label: string }[] = [
-  { id: 'light', label: 'Light' },
-  { id: 'dark', label: 'Dark' },
+export const THEMES: { id: Theme; label: string; dark: boolean; note: string }[] = [
+  { id: 'light', label: 'Paper', dark: false, note: 'Light: the printed sheet' },
+  { id: 'sepia', label: 'Sepia', dark: false, note: 'Light: warm paper and brown ink' },
+  { id: 'blueprint', label: 'Blueprint', dark: false, note: 'Light: drawing-office blue' },
+  { id: 'dark', label: 'Charcoal', dark: true, note: 'Dark: the studio at night' },
+  { id: 'midnight', label: 'Midnight', dark: true, note: 'Dark: blue-black and cyan' },
+  { id: 'phosphor', label: 'Phosphor', dark: true, note: 'Dark: green on an oscilloscope' },
 ];
 
-export const initialTheme = (): Theme =>
-  window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+/** Where the chosen theme is kept, so it survives a quit. */
+const STORED = 'daphne:theme';
+
+const known = (value: string | null): value is Theme =>
+  THEMES.some((t) => t.id === value);
+
+/** What was chosen last, or whichever of the two originals matches the desktop. */
+export const initialTheme = (): Theme => {
+  try {
+    const saved = window.localStorage?.getItem(STORED);
+    if (known(saved)) return saved;
+  } catch {
+    // Private windows and locked-down shells can refuse storage. Not a reason
+    // to come up without a theme.
+  }
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+};
 
 export const applyTheme = (theme: Theme): void => {
   document.documentElement.dataset.theme = theme;
+  try {
+    window.localStorage?.setItem(STORED, theme);
+  } catch {
+    // As above: the theme still applies, it just will not be remembered.
+  }
 };

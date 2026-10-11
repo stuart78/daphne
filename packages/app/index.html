@@ -4,6 +4,52 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Daphne</title>
+    <!--
+      The window opens before the stylesheet lands, and whatever colour it
+      paints in that moment is a flash of the wrong theme. Stating the two
+      system backgrounds here, inline, means the first frame is already right
+      for a fresh install; the script below covers a theme that was chosen by
+      hand, which need not be the one the desktop is set to. The app then sets
+      data-theme itself and takes over.
+    -->
+    <meta name="color-scheme" content="dark light" />
+    <style>
+      :root {
+        color-scheme: dark light;
+        background: #0a090c;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          background: #f4f2ee;
+        }
+      }
+      body {
+        margin: 0;
+      }
+    </style>
+    <script>
+      // The backgrounds of ui/styles.css, by theme. Kept short on purpose: it
+      // runs before anything else and only has to carry the first frame.
+      (function () {
+        var background = {
+          light: '#f4f2ee',
+          sepia: '#efe4d2',
+          blueprint: '#e9eff7',
+          dark: '#0a090c',
+          midnight: '#080b14',
+          phosphor: '#040905',
+        };
+        try {
+          var chosen = window.localStorage.getItem('daphne:theme');
+          if (background[chosen]) {
+            document.documentElement.dataset.theme = chosen;
+            document.documentElement.style.background = background[chosen];
+          }
+        } catch (err) {
+          // Storage can be refused. The media query above still applies.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

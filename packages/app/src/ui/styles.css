@@ -1,7 +1,12 @@
 /*
- * Two palettes over one set of tokens. The drawing surfaces are canvases, so
+ * Six palettes over one set of tokens. The drawing surfaces are canvases, so
  * they read these back through getComputedStyle rather than inheriting them —
  * see DrawPad and PaintPad.
+ *
+ * Every palette sets the same names, including `--on-accent`, the ink used on
+ * top of the accent itself. Adding one means a block here and an entry in
+ * ui/theme.ts; the backgrounds are also listed in index.html, where they catch
+ * the first frame before this stylesheet lands.
  */
 :root,
 :root[data-theme='dark'] {
@@ -18,6 +23,45 @@
   --pad-fill: rgba(232, 228, 221, 0.22);
   --control: #1e1c23;
   --control-line: #34313d;
+  --on-accent: #1a0e08;
+  color-scheme: dark;
+}
+
+/* Blue-black and cyan: the machine as a piece of lab equipment. */
+:root[data-theme='midnight'] {
+  --bg: #080b14;
+  --panel: #101728;
+  --line: #1f2a42;
+  --ink: #dde6f5;
+  --muted: #7d8aa6;
+  --accent: #4fc3f7;
+  --pad-bg: #0c1322;
+  --pad-grid: #1d2740;
+  --pad-guide: #2c3a5a;
+  --pad-ink: #dde6f5;
+  --pad-fill: rgba(221, 230, 245, 0.2);
+  --control: #16203a;
+  --control-line: #2b3756;
+  --on-accent: #04131f;
+  color-scheme: dark;
+}
+
+/* Green on near-black, the way the drawing looks on an oscilloscope. */
+:root[data-theme='phosphor'] {
+  --bg: #040905;
+  --panel: #0a1109;
+  --line: #17301a;
+  --ink: #c8f5cf;
+  --muted: #6f9a77;
+  --accent: #4ade80;
+  --pad-bg: #060e07;
+  --pad-grid: #163019;
+  --pad-guide: #22462a;
+  --pad-ink: #c8f5cf;
+  --pad-fill: rgba(200, 245, 207, 0.18);
+  --control: #0d1a0e;
+  --control-line: #1f3d23;
+  --on-accent: #04140a;
   color-scheme: dark;
 }
 
@@ -35,6 +79,45 @@
   --pad-fill: rgba(27, 26, 30, 0.16);
   --control: #ffffff;
   --control-line: #c8c1b5;
+  --on-accent: #1a0e08;
+  color-scheme: light;
+}
+
+/* Warm paper and brown ink: the sheet after a few years in a drawer. */
+:root[data-theme='sepia'] {
+  --bg: #efe4d2;
+  --panel: #fdf6e8;
+  --line: #d8c6a8;
+  --ink: #3a2a18;
+  --muted: #7d6a52;
+  --accent: #a8532a;
+  --pad-bg: #fdf6e8;
+  --pad-grid: #e6d8be;
+  --pad-guide: #cfbb99;
+  --pad-ink: #3a2a18;
+  --pad-fill: rgba(58, 42, 24, 0.15);
+  --control: #fffaf0;
+  --control-line: #cbb897;
+  --on-accent: #fdf3e6;
+  color-scheme: light;
+}
+
+/* Drawing-office blue: pale paper, navy ink, the pencil lines of a plan. */
+:root[data-theme='blueprint'] {
+  --bg: #e9eff7;
+  --panel: #f8fbff;
+  --line: #c9d6e6;
+  --ink: #142338;
+  --muted: #5d6f87;
+  --accent: #1f5fbf;
+  --pad-bg: #f8fbff;
+  --pad-grid: #dde7f3;
+  --pad-guide: #c2d1e4;
+  --pad-ink: #142338;
+  --pad-fill: rgba(20, 35, 56, 0.14);
+  --control: #ffffff;
+  --control-line: #b9c8da;
+  --on-accent: #f2f7ff;
   color-scheme: light;
 }
 
@@ -191,7 +274,7 @@ button.primary {
 button.primary.on {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a0e08;
+  color: var(--on-accent);
 }
 
 .toggle {
@@ -274,16 +357,19 @@ button.primary.on {
  * lane you are working on is often well down the page, and a time scale you
  * have to scroll back up to read is no use.
  */
+/*
+ * The ruler and the zoom, as the header's third row rather than a strip
+ * floating over the lanes. It is a transport: where you are in the thirty
+ * seconds, and how much of them you are looking at.
+ */
 .timeline {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  background: var(--bg);
+  padding: 6px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  flex: 0 0 auto;
 }
 
 .ruler {
@@ -300,20 +386,32 @@ button.primary.on {
   cursor: grabbing;
 }
 
+/* How much of the sheet is on screen, and the two ways to change it. */
 .zoom {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  margin-left: auto;
 }
 
 .zoom .value {
-  min-width: 44px;
-  text-align: right;
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
 }
 
-.zoom button {
-  min-width: 26px;
-  padding: 3px 6px;
+.zoom button.icon {
+  padding: 0 7px;
+}
+
+.zoom button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.zoom button:disabled:hover {
+  border-color: var(--control-line);
 }
 
 .timbres {
@@ -383,19 +481,6 @@ button.primary.on {
   width: 76px;
 }
 
-.lane-label .dice {
-  margin-left: auto;
-  padding: 2px 8px;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-}
-
-.lane-label .dice:hover {
-  color: var(--ink);
-  border-color: var(--accent);
-}
-
 /* Mode switches on a lane's label line: pitch, the vibrato strip, the reverb. */
 .pitch-tools,
 .lane-tools {
@@ -442,13 +527,29 @@ button.primary.on {
 
 .segmented button:last-child {
   border-radius: 0 4px 4px 0;
+}
+
+/*
+ * Neighbours share one border rather than drawing two side by side. Pulling
+ * only the last button over left a double seam everywhere else once these
+ * groups grew past two.
+ */
+.segmented button + button {
   margin-left: -1px;
+}
+
+/* The one that is on, and the one under the pointer, own the shared edge. */
+.segmented button.on,
+.segmented button:hover,
+.segmented button:focus-visible {
+  position: relative;
+  z-index: 1;
 }
 
 .segmented button.on {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a0e08;
+  color: var(--on-accent);
 }
 
 /* Import and Export: one button each, opening a short list. */
@@ -471,7 +572,16 @@ button.primary.on {
   box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
 }
 
+/*
+ * A row in a menu, not a button in a bar: the shared button rule centres its
+ * contents, which is right on a toolbar and wrong on a list of commands.
+ */
 .menu-list button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 0;
   border: 0;
   background: transparent;
   text-align: left;
@@ -483,22 +593,6 @@ button.primary.on {
   background: var(--control);
 }
 
-/* Preset picker and detune tag on each timbre, pushed right with the dice. */
-.lane-label .preset {
-  margin-left: auto;
-  background: var(--control);
-  color: var(--muted);
-  border: 1px solid var(--control-line);
-  border-radius: 5px;
-  font: inherit;
-  font-size: 10px;
-  padding: 2px 4px;
-}
-
-.lane-label .preset ~ .dice {
-  margin-left: 0;
-}
-
 .unison-tag {
   padding: 1px 7px;
   font-size: 10px;
@@ -506,10 +600,13 @@ button.primary.on {
   color: var(--accent);
 }
 
-/* Four timbres share one row. Their headers stay on one line, so every slide
-   starts at the same height. */
+/*
+ * A timbre's header is two lines by design rather than by overflow: the name
+ * and where it sits in the stereo field on one, the four controls on the next.
+ * Letting them wrap left the row ragged across the four columns; stating it
+ * puts every control under the same one in every timbre.
+ */
 .timbre .lane-label {
-  flex-wrap: nowrap;
   align-items: center;
   min-width: 0;
 }
@@ -518,17 +615,34 @@ button.primary.on {
   white-space: nowrap;
 }
 
+/* The octave is a sign and a digit; the two menus share what is left. */
+.timbre-controls {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+  min-width: 0;
+}
+
+/*
+ * Below about 1340 a quarter of the window is too narrow for four of them
+ * without cutting the words short, so they go two and two. The width is the
+ * window's, not the column's, so all four timbres break at the same moment and
+ * the slides stay level.
+ */
+@media (max-width: 1339px) {
+  .timbre-controls {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
 .timbre .lane-label .muted {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
   flex: 0 1 auto;
-}
-
-.timbre .lane-label .preset {
-  flex: 0 0 auto;
-  min-width: 84px;
 }
 
 .timbre-pad {
@@ -547,11 +661,20 @@ button.primary.on {
  * Pan: a dot on the stereo field rather than a slider, since what matters is
  * how far off centre a timbre sits rather than how far along a range it is.
  */
+/* L and R either side of the field, so which end is which needs no hovering. */
+.pan-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
 .pan-dot {
   position: relative;
-  width: 58px;
+  width: 52px;
   height: 20px;
-  margin-left: auto;
   flex: 0 0 auto;
   cursor: pointer;
   touch-action: none;
@@ -598,8 +721,60 @@ button.primary.on {
   outline: none;
 }
 
-.timbre .lane-label .pan-dot ~ .preset {
-  margin-left: 0;
+/*
+ * The small controls on a timbre: the same chrome as the buttons in the bar,
+ * at the smaller size four across a window allows. The menus were drawn by the
+ * browser, so a differently shaped box sat next to Open and Save; they now draw
+ * their own border and their own chevron, the one the menu buttons use.
+ */
+.preset,
+.dice {
+  box-sizing: border-box;
+  /* The height of a button in the bar. The type is a point smaller, which is
+     all four controls across a quarter of the window will take. */
+  height: 30px;
+  min-height: 0;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid var(--control-line);
+  border-radius: 5px;
+  background: var(--control);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.preset {
+  appearance: none;
+  width: 100%;
+  padding-right: 21px;
+  text-overflow: ellipsis;
+}
+
+.pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pick::after {
+  content: '';
+  position: absolute;
+  right: 9px;
+  width: 5px;
+  height: 5px;
+  /* The rotated square hangs a little below its box, so it is nudged up. */
+  margin-top: -1px;
+  border-right: 1.3px solid currentColor;
+  border-bottom: 1.3px solid currentColor;
+  transform: rotate(45deg);
+  opacity: 0.65;
+  pointer-events: none;
+}
+
+.dice:hover,
+.preset:hover {
+  border-color: var(--accent);
 }
 
 /* Transport buttons hold an icon rather than a word. */
@@ -650,18 +825,12 @@ button.icon svg {
 .segmented button.icon.on {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a0e08;
+  color: var(--on-accent);
 }
 
 /* File and view controls sit to the right of the transport. */
 .bar .controls.right {
   margin-left: auto;
-}
-
-.menu-list button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .menu-list .tick {
@@ -687,4 +856,42 @@ button.icon svg {
 .tools .segmented button {
   min-height: 30px;
   font-size: inherit;
+}
+
+/* The two zoom buttons are one control, after the length they change. */
+.zoom .segmented button {
+  min-height: 30px;
+}
+
+/* A band whose Fidelity switch is off: still drawable, plainly not in use. */
+.lane.disconnected .drawpad {
+  opacity: 0.55;
+}
+
+button.pending {
+  min-height: 0;
+  padding: 0 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+button.pending:hover {
+  opacity: 1;
+}
+
+
+/* A muted strip: still drawn, plainly not being heard. */
+.lane.muted .drawpad {
+  opacity: 0.45;
+}
+
+.lane-label .mute {
+  min-height: 22px;
+  padding: 0 6px;
+  color: var(--muted);
+}
+
+.lane-label .mute.on {
+  color: var(--accent);
+  border-color: var(--accent);
 }

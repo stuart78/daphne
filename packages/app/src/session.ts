@@ -35,7 +35,7 @@
  * ```
  */
 
-import type { Fidelity, PitchMode, ReverbSpace, Unison, VibratoMode } from '@oramics/engine';
+import type { Fidelity, LaneName, PitchMode, ReverbSpace, Unison, VibratoMode } from '@oramics/engine';
 
 import type { MarkMode } from './music.js';
 
@@ -66,6 +66,12 @@ export interface SessionSettings {
   presets: string[];
   /** Where each timbre sits, -1 left to 1 right. Heard only with Mono off. */
   pan: number[];
+  /** Strips the engine is handed blank, so a piece can be heard a part at a time. */
+  muted: LaneName[];
+  /** How far each timbre sits from the note being played, in octaves. */
+  octaves: number[];
+  /** How far each timbre's own clock wanders, 0 to 1. */
+  slip: number[];
   /** What the vibrato strip drives: the pitch, or an echo's time. */
   vibratoMode: VibratoMode;
   /** How much of the echo goes back round, 0 to 0.95. */
@@ -295,6 +301,13 @@ export const decodeSession = (text: string, fallback: SessionSettings): Session 
   }
   if (!Array.isArray(settings.pan) || settings.pan.length !== fallback.pan.length) {
     settings.pan = fallback.pan;
+  }
+  if (!Array.isArray(settings.muted)) settings.muted = fallback.muted;
+  if (!Array.isArray(settings.octaves) || settings.octaves.length !== fallback.octaves.length) {
+    settings.octaves = fallback.octaves;
+  }
+  if (!Array.isArray(settings.slip) || settings.slip.length !== fallback.slip.length) {
+    settings.slip = fallback.slip;
   }
 
   return { lanes, slides, settings };

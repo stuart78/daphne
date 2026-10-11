@@ -10,12 +10,21 @@ import { Machine, Slide } from '@oramics/engine';
 
 import { LANE_ORDER, type EngineMessage, type MeterMessage } from './protocol.js';
 
+/** Below this, for a quarter of a second, a tail has finished. */
+const SILENCE_LEVEL = 1e-4;
+
 /** Meter updates for the UI, throttled to roughly display rate. */
 const METER_INTERVAL_FRAMES = 1500;
 
 class OramicsProcessor extends AudioWorkletProcessor {
   private machine = new Machine({ sampleRate });
   private playing = false;
+  /**
+   * Whether anything is still sounding while paused. The machine keeps being
+   * pumped until its tails have died, and then there is nothing to pump for.
+   */
+  private ringing = false;
+  private quietFrames = 0;
   private framesSinceMeter = 0;
   private readonly positions = new Float32Array(LANE_ORDER.length);
 
@@ -52,6 +61,12 @@ class OramicsProcessor extends AudioWorkletProcessor {
       case 'reverbSpace':
         this.machine.setReverbSpace(msg.space);
         break;
+      case 'slip':
+        this.machine.setSlip(msg.index, msg.amount);
+        break;
+      case 'timbreOctave':
+        this.machine.setTimbreOctave(msg.index, msg.octaves);
+        break;
       case 'pan':
         this.machine.setPan(msg.index, msg.value);
         break;
@@ -77,7 +92,18 @@ class OramicsProcessor extends AudioWorkletProcessor {
         this.machine.setVibratoDepthCents(msg.cents);
         break;
       case 'transport':
+        if (msg.stop) {
+          // The plug, not the pause: everything quiet at once.
+          this.machine.silence();
+          this.ringing = false;
+          this.quietFrames = 0;
+        } else if (!msg.playing && this.playing) {
+          // Let what is sounding die away in its own time.
+          this.ringing = true;
+          this.quietFrames = 0;
+        }
         this.playing = msg.playing;
+        this.machine.setPaused(!msg.playing);
         if (msg.rewind) this.machine.reset();
         /*
          * Say where the heads are now.
@@ -97,7 +123,7 @@ class OramicsProcessor extends AudioWorkletProcessor {
     if (!output || output.length === 0) return true;
     const left = output[0]!;
 
-    if (!this.playing) {
+    if (!this.playing && !this.ringing) {
       for (const channel of output) channel.fill(0);
       return true;
     }
@@ -107,6 +133,21 @@ class OramicsProcessor extends AudioWorkletProcessor {
     const right = output[1];
     this.machine.render(left, left.length, right);
     for (let c = 2; c < output.length; c++) output[c]!.set(left);
+
+    /*
+     * Stop pumping once the tail has gone. A paused machine still runs four
+     * servo loops a sample, and leaving that going while nothing can be heard
+     * burns an audio thread for no sound.
+     */
+    if (this.ringing) {
+      let peak = 0;
+      for (const v of left) peak = Math.max(peak, Math.abs(v));
+      this.quietFrames = peak < SILENCE_LEVEL ? this.quietFrames + left.length : 0;
+      if (this.quietFrames > sampleRate * 0.25) {
+        this.ringing = false;
+        this.machine.silence();
+      }
+    }
 
     this.framesSinceMeter += left.length;
     if (this.framesSinceMeter >= METER_INTERVAL_FRAMES) {

@@ -352,6 +352,9 @@ afternoon, and a line drawn along the bottom froze the piece with no way back
 until the line came up again. Slow enough to hear as a halt, fast enough that
 the piece always comes out the other side.
 
+It has no switch of its own: a strip left blank rests on its centre line, and
+the centre line is normal speed, so there was nothing for a switch to do.
+
 ## Pan
 
 Each timbre has a pan slider, L to R, set once rather than drawn. The machine
@@ -375,6 +378,69 @@ know nothing about it. The four corner squares come back as a smaller copy of
 the same rectangle, and undoing that is the same arithmetic as undoing print
 scale and camera angle, which registration does anyway. A Letter sheet and a
 Legal one read back the same piece.
+
+## Drawing tools
+
+Five tools, on the tool bar: **draw** and **erase** are freehand, and **line**,
+**curve** and **arc** are placed rather than drawn. Press where a mark starts,
+drag, and release where it ends; what lies between is worked out. A line is the
+shortest way between the two values. A curve eases out of the first and into
+the second, which is what a hand drawing a swell does and what an amplitude
+usually wants. An arc is the exponential between them, worked out in equal
+steps of decibels rather than equal steps of height: steep at the loud end and
+flattening towards silence, which is how a sound dies away and how a fade
+sounds even when the line looks wrong. It bends towards the quieter end
+whichever way it is drawn. Hold **shift** and the angle snaps to one of sixteen, every
+22.5 degrees, measured on screen rather than in the data: a lane is wide and
+short, so the same pair of numbers is a gentle slope to look at and a cliff to
+the machine. A mark that would leave the band flattens along the rail, since
+there is no value above full or below silence.
+
+The mark is dashed while you aim it and only written to the lane when you let
+go. The timbre slides are painted with a brush rather than drawn with these.
+
+## Themes
+
+Six, under the palette: Paper, Sepia and Blueprint are light, Charcoal,
+Midnight and Phosphor are dark. ⌘D steps through them. The choice is kept, and
+the shell is told which background to paint the window before the page loads,
+so a dark theme on a light desktop still opens without a flash.
+
+A theme is one block of custom properties in `app/src/ui/styles.css` and one
+entry in `app/src/ui/theme.ts`. The drawing surfaces are canvases and read the
+same properties back at paint time, so a new palette reaches them without any
+further work. Its background also belongs in the short list in `index.html`,
+which carries the first frame.
+
+## Working with a scanned timbre
+
+A scan reads a drawn waveform through a threshold, and a threshold turns a pen
+line into a staircase: edges the scanner hears as harmonics nobody drew, and a
+join between the last column and the first that clicks once per cycle. **Smooth
+it**, at the foot of a timbre's shape menu, traces the stroke, rounds it off,
+bridges what the pen missed and takes out the offset so the cycle passes
+through zero. It wraps rather than stopping at the ends, which is what makes
+the join silent. On a workshop sheet it halved the roughness and brought every
+cycle onto the zero line.
+
+**Slip** gives a timbre a clock of its own. Four slides driven from one pitch
+sit exactly on top of each other, which is tidier than any tape machine
+managed; slip lets each wander by up to a few per cent in a slow random walk,
+so the voices drift apart and back. Steady, drift, wander, loose.
+
+## Taking a piece apart
+
+Every strip has a **mute**, so a piece can be heard a part at a time. A muted
+strip keeps its drawing and the engine is handed blank paper for it, which
+already means something sensible on every lane: silence on an amplitude, no
+wobble on vibrato, normal speed on the transport.
+
+The **trash** opens a list: everything, which asks first, or one strip at a
+time, which does not.
+
+Each timbre can also sit up to two octaves off the note, which is the one way
+this instrument has of sounding more than one pitch at once. The machine had a
+single pitch for the whole voice.
 
 ## Starting again
 

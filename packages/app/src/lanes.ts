@@ -161,3 +161,81 @@ export const roleFor = (def: LaneDef, layout: Layout): string | null => {
   if (def.name === 'octave') return layout === 'TONE' ? 'OCT' : null;
   return def.role;
 };
+
+/**
+ * Smooth a painted slide, and sit it on the zero line.
+ *
+ * A scanned waveform comes in hard: the threshold between ink and paper turns a
+ * pen line into a staircase, and the staircase is full of edges the scanner
+ * reads as harmonics it never had. This traces the stroke, rounds it off, and
+ * takes out the offset so the cycle passes through zero, then lays it again at
+ * brush weight.
+ *
+ * Wrapped rather than clipped at the ends, because a slide is one cycle of a
+ * loop: smoothing the last column against the first is what stops the join
+ * clicking once per cycle.
+ */
+export const smoothSlide = (field: Float32Array, strength = 1): Float32Array => {
+  const W = SLIDE_WIDTH;
+  const H = SLIDE_HEIGHT;
+  const INK = 0.5;
+
+  // The stroke, as a height per column: 1 at the top of the panel, -1 at the foot.
+  const edge = new Float32Array(W).fill(Number.NaN);
+  for (let x = 0; x < W; x++) {
+    for (let y = 0; y < H; y++) {
+      if (field[y * W + x]! >= INK) {
+        edge[x] = 1 - (2 * y) / (H - 1);
+        break;
+      }
+    }
+  }
+
+  let first = 0;
+  while (first < W && Number.isNaN(edge[first]!)) first++;
+  if (first === W) return field; // clear glass: nothing to smooth
+
+  // Bridge whatever was not drawn, the short way round the cycle.
+  for (let x = 0; x < W; x++) {
+    if (!Number.isNaN(edge[x]!)) continue;
+    let back = 1;
+    while (Number.isNaN(edge[(x - back + W) % W]!)) back++;
+    let forward = 1;
+    while (Number.isNaN(edge[(x + forward) % W]!)) forward++;
+    const a = edge[(x - back + W) % W]!;
+    const b = edge[(x + forward) % W]!;
+    edge[x] = a + ((b - a) * back) / (back + forward);
+  }
+
+  // A moving average that wraps, so the cycle stays a cycle.
+  const window = Math.max(3, Math.round(W * 0.03 * strength));
+  const smoothed = new Float32Array(W);
+  for (let x = 0; x < W; x++) {
+    let total = 0;
+    for (let k = -window; k <= window; k++) total += edge[(x + k + W) % W]!;
+    smoothed[x] = total / (window * 2 + 1);
+  }
+
+  // Through zero: a cycle with an offset is a cycle with a thump in it.
+  let mean = 0;
+  for (const v of smoothed) mean += v;
+  mean /= W;
+
+  const out = new Float32Array(W * H);
+  const thickness = Math.max(1, Math.round(H * 0.14));
+  for (let x = 0; x < W; x++) {
+    const v = Math.max(-1, Math.min(1, smoothed[x]! - mean));
+    /*
+     * The top edge lands exactly on the value, because the top edge is what the
+     * spot rides. Laying the whole ribbon inside the panel instead would squash
+     * the edge towards the middle and put back the offset just taken out.
+     */
+    const top = Math.round(((1 - v) / 2) * (H - 1));
+    for (let k = 0; k < thickness; k++) {
+      const y = top + k;
+      if (y >= H) break;
+      out[y * W + x] = 1;
+    }
+  }
+  return out;
+};

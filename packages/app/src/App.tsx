@@ -7,6 +7,7 @@ import {
   LOWEST_OCTAVE,
   randomSlideField,
   type Fidelity,
+  type LaneName,
   type PitchMode,
   type ReverbSpace,
   type Unison,
@@ -50,15 +51,18 @@ import {
 import type { ShellCommand } from './shell.js';
 import {
   LANE_DEFS,
+  LANE_SAMPLES,
   SLIDE_HEIGHT,
   SLIDE_WIDTH,
   makeAllLanes,
+  makeLane,
   paintSlide,
+  smoothSlide,
   type LaneMap,
   type LaneTrack,
   type SlideShape,
 } from './lanes.js';
-import { DrawPad } from './ui/DrawPad.js';
+import { DrawPad, type Tool } from './ui/DrawPad.js';
 import { MenuButton } from './ui/MenuButton.js';
 import { PanDot } from './ui/PanDot.js';
 import { PaintPad } from './ui/PaintPad.js';
@@ -120,6 +124,14 @@ const PRESETS: { id: string; label: string; shape: SlideShape | null; unison: Un
   { id: 'blank', label: 'Blank', shape: 'blank', unison: NO_UNISON },
 ];
 
+/** Slip settings, as words rather than a number nobody can hear in the abstract. */
+const SLIPS: { label: string; amount: number }[] = [
+  { label: 'Steady', amount: 0 },
+  { label: 'Drift', amount: 0.35 },
+  { label: 'Wander', amount: 0.7 },
+  { label: 'Loose', amount: 1 },
+];
+
 /**
  * A fresh set of slides. Randomised rather than four identical sines, so a new
  * session already sounds like something.
@@ -144,8 +156,11 @@ const DEFAULT_SETTINGS: SessionSettings = {
   unison: Array.from({ length: 4 }, () => NO_UNISON),
   presets: ['', '', '', ''],
   pan: [0, 0, 0, 0],
+  muted: [],
+  octaves: [0, 0, 0, 0],
+  slip: [0, 0, 0, 0],
   vibratoMode: 'vibrato',
-  echoFeedback: 0.35,
+  echoFeedback: 0.5,
   reverbSpace: 'plate',
 };
 
@@ -164,6 +179,38 @@ const PauseIcon = (): JSX.Element => (
   <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">
     <rect x="2.5" y="1.5" width="2.8" height="9" fill="currentColor" />
     <rect x="6.7" y="1.5" width="2.8" height="9" fill="currentColor" />
+  </svg>
+);
+
+const SoundIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <path
+      d="M2 5.4 H4.2 L7.4 2.6 V11.4 L4.2 8.6 H2 Z"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinejoin="round"
+    />
+    <path d="M9.4 5.2 A2.6 2.6 0 0 1 9.4 8.8" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+  </svg>
+);
+
+const MutedIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <path
+      d="M2 5.4 H4.2 L7.4 2.6 V11.4 L4.2 8.6 H2 Z"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.2"
+      strokeLinejoin="round"
+    />
+    <path d="M9.4 5.4 L12.4 8.6 M12.4 5.4 L9.4 8.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+  </svg>
+);
+
+const StopIcon = (): JSX.Element => (
+  <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false">
+    <rect x="2.2" y="2.2" width="7.6" height="7.6" rx="1" fill="currentColor" />
   </svg>
 );
 
@@ -200,6 +247,43 @@ const EraserIcon = (): JSX.Element => (
   </svg>
 );
 
+const LineIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <path d="M2.6 11.4 L11.4 2.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    <circle cx="2.6" cy="11.4" r="1.5" fill="currentColor" />
+    <circle cx="11.4" cy="2.6" r="1.5" fill="currentColor" />
+  </svg>
+);
+
+const CurveIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <path
+      d="M2.6 11.4 C 6 11.4 8 2.6 11.4 2.6"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+    />
+    <circle cx="2.6" cy="11.4" r="1.5" fill="currentColor" />
+    <circle cx="11.4" cy="2.6" r="1.5" fill="currentColor" />
+  </svg>
+);
+
+/** One shoulder rather than two: the exponential, steep at one end and flat at the other. */
+const ArcIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <path
+      d="M2.6 11.4 C 8.4 11.4 11.4 8.4 11.4 2.6"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+    />
+    <circle cx="2.6" cy="11.4" r="1.5" fill="currentColor" />
+    <circle cx="11.4" cy="2.6" r="1.5" fill="currentColor" />
+  </svg>
+);
+
 const TrashIcon = (): JSX.Element => (
   <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
     <path
@@ -209,6 +293,34 @@ const TrashIcon = (): JSX.Element => (
       strokeWidth="1.3"
       strokeLinejoin="round"
       strokeLinecap="round"
+    />
+  </svg>
+);
+
+/** A magnifier, with a bar or a cross in it for out and in. */
+const ZoomIcon = ({ sign }: { sign: 'out' | 'in' }): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <circle cx="6.2" cy="6.2" r="4.2" fill="none" stroke="currentColor" strokeWidth="1.3" />
+    <path d="M9.4 9.4 L12.6 12.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    <path
+      d={sign === 'in' ? 'M4.2 6.2 H8.2 M6.2 4.2 V8.2' : 'M4.2 6.2 H8.2'}
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+/** The whole sheet, edge to edge: two walls and an arrow filling the space. */
+const FitIcon = (): JSX.Element => (
+  <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true" focusable="false">
+    <path
+      d="M1.6 3 V11 M12.4 3 V11 M4 7 H10 M4 7 L5.8 5.2 M4 7 L5.8 8.8 M10 7 L8.2 5.2 M10 7 L8.2 8.8"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
     />
   </svg>
 );
@@ -246,6 +358,9 @@ const PaletteIcon = (): JSX.Element => (
   </svg>
 );
 
+/** Blank paper, for a strip the engine is told to ignore. */
+const BLANK_LANE = new Float32Array(LANE_SAMPLES).fill(Number.NaN);
+
 /** Lanes the engine hears through the note reading rather than as drawn. */
 const PITCH_LANES = new Set<keyof LaneMap>(['pitch', 'octave']);
 
@@ -259,6 +374,24 @@ export const App = (): JSX.Element => {
   const [unison, setUnison] = useState<Unison[]>(DEFAULT_SETTINGS.unison);
   /** Where each timbre sits, -1 left to 1 right. Heard only with Mono off. */
   const [pan, setPan] = useState<number[]>(DEFAULT_SETTINGS.pan);
+  /*
+   * Strips the machine is told to ignore, so a piece can be taken apart and
+   * listened to a part at a time. A muted strip keeps its drawing; the engine
+   * is simply handed blank paper for it, and blank paper already means
+   * something sensible on every lane: silence on an amplitude, no wobble on
+   * vibrato, normal speed on the transport.
+   */
+  const [muted, setMuted] = useState<LaneName[]>(DEFAULT_SETTINGS.muted);
+  /** How far each timbre sits from the note being played, in octaves. */
+  const [octaves, setOctaves] = useState<number[]>(DEFAULT_SETTINGS.octaves);
+  /** How far each timbre's own clock wanders from the others. */
+  const [slip, setSlip] = useState<number[]>(DEFAULT_SETTINGS.slip);
+  const toggleMute = (name: LaneName): void =>
+    setMuted((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]));
+  // Read inside callbacks that are not rebuilt on every mute, so they see the
+  // current set rather than the one they closed over.
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
   /** What the vibrato strip drives, and where the reverb send goes. */
   const [vibratoMode, setVibratoMode] = useState<VibratoMode>(DEFAULT_SETTINGS.vibratoMode);
   const [echoFeedback, setEchoFeedback] = useState(DEFAULT_SETTINGS.echoFeedback);
@@ -288,8 +421,18 @@ export const App = (): JSX.Element => {
   // the pads would repaint from the old palette before this landed.
   useLayoutEffect(() => {
     applyTheme(theme);
+    // The shell paints the window before the page loads, so it has to be told
+    // what colour to paint it next time. Otherwise a theme picked by hand opens
+    // on a frame of whatever the desktop is set to.
+    const background = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    if (background) window.oramics?.rememberBackground(background);
   }, [theme]);
-  const [erasing, setErasing] = useState(false);
+  /*
+   * What the pointer does on a lane. Erasing is one of the tools rather than a
+   * switch beside them: you are either laying ink or taking it off.
+   */
+  const [tool, setTool] = useState<Tool>('draw');
+  const erasing = tool === 'erase';
   /** Bias for the generator: 0 spiky and harsh, 1 round and soft. */
   const [character, setCharacter] = useState(0.5);
   /** How eventful generated slides are — gaps, stacked ribbons, weight changes. */
@@ -345,9 +488,18 @@ export const App = (): JSX.Element => {
   if (client.current === null) client.current = new AudioClient();
 
   /** Every lane but pitch and octave, which the reading effect sends. */
+  /**
+   * What the engine should hear from a strip: what is drawn on it, or blank
+   * paper if it is muted. The drawing stays on screen either way.
+   */
+  const heard = (name: LaneName, values: Float32Array): Float32Array =>
+    mutedRef.current.includes(name) ? BLANK_LANE : values;
+
   const sendControlLanes = (next: LaneMap): void => {
     for (const def of LANE_DEFS) {
-      if (!PITCH_LANES.has(def.name)) client.current!.sendLane(def.name, next[def.name].values, DURATION_S);
+      if (!PITCH_LANES.has(def.name)) {
+        client.current!.sendLane(def.name, heard(def.name, next[def.name].values), DURATION_S);
+      }
     }
   };
 
@@ -430,7 +582,7 @@ export const App = (): JSX.Element => {
   const updateLane = useCallback((name: keyof LaneMap, track: LaneTrack) => {
     setLanes((prev) => ({ ...prev, [name]: track }));
     // Pitch and octave go through the reading first, in the effect below.
-    if (!PITCH_LANES.has(name)) client.current!.sendLane(name, track.values, DURATION_S);
+    if (!PITCH_LANES.has(name)) client.current!.sendLane(name, heard(name, track.values), DURATION_S);
   }, []);
 
   /*
@@ -444,9 +596,10 @@ export const App = (): JSX.Element => {
   useEffect(() => {
     const c = client.current!;
     c.send({ type: 'pitchMode', mode: pitchMode });
-    c.sendLane('pitch', tonal ? tonal.note : lanes.pitch.values, DURATION_S);
-    c.sendLane('octave', tonal ? tonal.octave : lanes.octave.values, DURATION_S);
-  }, [pitchMode, tonal, lanes.pitch, lanes.octave]);
+    c.sendLane('pitch', heard('pitch', tonal ? tonal.note : lanes.pitch.values), DURATION_S);
+    c.sendLane('octave', heard('octave', tonal ? tonal.octave : lanes.octave.values), DURATION_S);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pitchMode, tonal, lanes.pitch, lanes.octave, muted]);
 
   const pendingSlides = useRef(new Map<number, Float32Array>());
   const slideTimer = useRef<number | null>(null);
@@ -496,6 +649,25 @@ export const App = (): JSX.Element => {
   }, [pan]);
 
   useEffect(() => {
+    octaves.forEach((o, index) => client.current!.send({ type: 'timbreOctave', index, octaves: o }));
+  }, [octaves]);
+
+  useEffect(() => {
+    slip.forEach((amount, index) => client.current!.send({ type: 'slip', index, amount }));
+  }, [slip]);
+
+  // A strip that has just been muted or unmuted is resent as the engine should
+  // now hear it. The pitch pair has its own effect, which also watches `muted`.
+  useEffect(() => {
+    for (const def of LANE_DEFS) {
+      if (!PITCH_LANES.has(def.name)) {
+        client.current!.sendLane(def.name, heard(def.name, lanes[def.name].values), DURATION_S);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [muted]);
+
+  useEffect(() => {
     client.current!.send({ type: 'vibratoMode', mode: vibratoMode });
   }, [vibratoMode]);
 
@@ -524,6 +696,16 @@ export const App = (): JSX.Element => {
     setUnison((prev) => prev.map((u, i) => (i === index ? next : u)));
 
   const applyPreset = (index: number, id: string): void => {
+    /*
+     * Smoothing is not a shape but a pass over the one already there: it rounds
+     * off what a scan's hard threshold left behind and sits the cycle on the
+     * zero line, so the join stops clicking.
+     */
+    if (id === 'smooth') {
+      updateSlide(index, smoothSlide(slides[index]!));
+      setPreset(index, '');
+      return;
+    }
     const preset = PRESETS.find((p) => p.id === id);
     if (!preset) return;
     if (preset.shape) updateSlide(index, paintSlide(preset.shape));
@@ -546,6 +728,18 @@ export const App = (): JSX.Element => {
 
   const rewind = (): void => {
     client.current!.send({ type: 'transport', playing, rewind: true });
+  };
+
+  /**
+   * Stop, as against pause.
+   *
+   * Pausing holds the heads and lets the plate and the echo ring out, which is
+   * what taking your hand off a tape does. Stop is the plug: everything quiet
+   * at once, with the heads left where they are.
+   */
+  const stop = (): void => {
+    setPlaying(false);
+    client.current!.send({ type: 'transport', playing: false, stop: true });
   };
 
   const patchFidelity = (patch: Partial<Fidelity>): void => {
@@ -585,6 +779,9 @@ export const App = (): JSX.Element => {
     unison,
     presets,
     pan,
+    muted,
+    octaves,
+    slip,
     vibratoMode,
     echoFeedback,
     reverbSpace,
@@ -624,6 +821,7 @@ export const App = (): JSX.Element => {
 
       sendControlLanes(scan.lanes);
       scan.slides.forEach((field, i) => client.current!.sendSlide(i, field));
+      toTheTop();
 
       const drawn = Object.entries(scan.coverage)
         .filter(([, c]) => c >= 0.01)
@@ -663,6 +861,7 @@ export const App = (): JSX.Element => {
 
       sendControlLanes(midi.lanes);
       client.current!.send({ type: 'globalSpeed', value: midi.rate });
+      toTheTop();
 
       setStatus(`${file.name}: ${midi.summary}`);
     } catch (err) {
@@ -677,6 +876,12 @@ export const App = (): JSX.Element => {
    * send their own changes, and none of them fired here. The pitch lanes follow
    * through their own effect once the mode has landed.
    */
+  /** A new piece starts from the top, however it arrived. */
+  const toTheTop = (): void => {
+    client.current!.send({ type: 'transport', playing: false, rewind: true });
+    setPlaying(false);
+  };
+
   const applySession = (session: Session): void => {
     setLanes(session.lanes);
     setSlides(session.slides);
@@ -691,6 +896,9 @@ export const App = (): JSX.Element => {
     setUnison(session.settings.unison);
     setPresets(session.settings.presets);
     setPan(session.settings.pan);
+    setMuted(session.settings.muted);
+    setOctaves(session.settings.octaves);
+    setSlip(session.settings.slip);
     setVibratoMode(session.settings.vibratoMode);
     setEchoFeedback(session.settings.echoFeedback);
     setReverbSpace(session.settings.reverbSpace);
@@ -702,6 +910,7 @@ export const App = (): JSX.Element => {
     client_.send({ type: 'globalSpeed', value: session.settings.globalSpeed });
     client_.send({ type: 'vibratoDepth', cents: session.settings.vibratoCents });
     client_.send({ type: 'fidelity', patch: session.settings.fidelity });
+    toTheTop();
   };
 
   const onOpen = async (): Promise<void> => {
@@ -720,6 +929,9 @@ export const App = (): JSX.Element => {
    * as built. There is no undo, and a session can be half an afternoon's work,
    * so it asks first.
    */
+  /** One strip back to blank paper, leaving the rest of the piece alone. */
+  const clearLane = (name: LaneName): void => updateLane(name, makeLane());
+
   const onClear = (): void => {
     if (!window.confirm('Clear the sheet and start again? This cannot be undone.')) return;
     applySession({ lanes: makeAllLanes(), slides: freshSlides(), settings: DEFAULT_SETTINGS });
@@ -762,7 +974,7 @@ export const App = (): JSX.Element => {
     if (!restored) return;
     const timer = window.setTimeout(() => writeAutosave(current.current()), AUTOSAVE_MS);
     return () => window.clearTimeout(timer);
-  }, [restored, lanes, slides, globalSpeed, vibratoCents, fidelity, pitchMode, markMode, tuning, unison, presets, pan, vibratoMode, echoFeedback, reverbSpace]);
+  }, [restored, lanes, slides, globalSpeed, vibratoCents, fidelity, pitchMode, markMode, tuning, unison, presets, pan, muted, octaves, slip, vibratoMode, echoFeedback, reverbSpace]);
 
   useEffect(() => {
     if (!restored) return;
@@ -776,11 +988,14 @@ export const App = (): JSX.Element => {
     lanes: Object.fromEntries(
       LANE_DEFS.map((def) => [
         def.name,
-        tonal && def.name === 'pitch'
-          ? tonal.note
-          : tonal && def.name === 'octave'
-            ? tonal.octave
-            : lanes[def.name].values,
+        heard(
+          def.name,
+          tonal && def.name === 'pitch'
+            ? tonal.note
+            : tonal && def.name === 'octave'
+              ? tonal.octave
+              : lanes[def.name].values,
+        ),
       ]),
     ),
     slides,
@@ -790,6 +1005,8 @@ export const App = (): JSX.Element => {
     pitchMode,
     unison,
     pan,
+    octaves,
+    slip,
     vibratoMode,
     echoFeedback,
     reverbSpace,
@@ -852,6 +1069,7 @@ export const App = (): JSX.Element => {
     'pitch-mode': () => setPitchMode((m) => (m === 'hertz' ? 'notes' : 'hertz')),
     'mark-mode': () => setMarkMode((m) => (m === 'dots' ? 'lines' : 'dots')),
     'play-stop': () => void togglePlay(),
+    stop: () => stop(),
     'export-wav': () => void onExportWav(),
     'export-midi': () => void onExportMidi(),
     'projector-ready': () => postAll.current(),
@@ -879,7 +1097,8 @@ export const App = (): JSX.Element => {
         return;
       }
       event.preventDefault();
-      commands.current['play-stop']();
+      // Shift makes it the plug rather than the pause, as in the menu.
+      commands.current[event.shiftKey ? 'stop' : 'play-stop']();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -896,10 +1115,13 @@ export const App = (): JSX.Element => {
             <button
               className={playing ? 'primary on' : 'primary'}
               onClick={togglePlay}
-              title={playing ? 'Pause (space)' : 'Play (space)'}
+              title={playing ? 'Pause: hold the heads, let the sound ring out (space)' : 'Play (space)'}
               aria-label={playing ? 'Pause' : 'Play'}
             >
               {playing ? <PauseIcon /> : <PlayIcon />}
+            </button>
+            <button onClick={stop} title="Stop: silence everything at once" aria-label="Stop">
+              <StopIcon />
             </button>
           </div>
 
@@ -998,6 +1220,7 @@ export const App = (): JSX.Element => {
             label={<PaletteIcon />}
             items={THEMES.map((t) => ({
               label: t.label,
+              title: t.note,
               checked: theme === t.id,
               onSelect: () => setTheme(t.id),
             }))}
@@ -1016,28 +1239,40 @@ export const App = (): JSX.Element => {
       {/* One row for what the pointer does and what the machine is. */}
       <section className="tools">
         <div className="segmented" role="group" aria-label="Tool">
-          <button
-            className={erasing ? 'icon' : 'icon on'}
-            onClick={() => setErasing(false)}
-            title="Draw"
-            aria-label="Draw"
-            aria-pressed={!erasing}
-          >
-            <PencilIcon />
-          </button>
-          <button
-            className={erasing ? 'icon on' : 'icon'}
-            onClick={() => setErasing(true)}
-            title="Erase"
-            aria-label="Erase"
-            aria-pressed={erasing}
-          >
-            <EraserIcon />
-          </button>
+          {(
+            [
+              ['draw', 'Draw', <PencilIcon key="draw" />, 'Draw freehand'],
+              ['line', 'Line', <LineIcon key="line" />, 'Press and drag for a straight line. Hold shift to snap the angle'],
+              ['curve', 'Curve', <CurveIcon key="curve" />, 'Press and drag for a curve that eases out and in. Hold shift to snap the angle'],
+              ['arc', 'Arc', <ArcIcon key="arc" />, 'Press and drag for an exponential: steep at the loud end, flattening towards silence. Hold shift to snap the angle'],
+              ['erase', 'Erase', <EraserIcon key="erase" />, 'Rub marks out'],
+            ] as const
+          ).map(([id, label, icon, hint]) => (
+            <button
+              key={id}
+              className={tool === id ? 'icon on' : 'icon'}
+              onClick={() => setTool(id)}
+              title={hint}
+              aria-label={label}
+              aria-pressed={tool === id}
+            >
+              {icon}
+            </button>
+          ))}
         </div>
-        <button className="icon" onClick={onClear} title="Clear and start again (⌘N)" aria-label="Clear">
-          <TrashIcon />
-        </button>
+        <MenuButton
+          className="icon"
+          title="Clear"
+          label={<TrashIcon />}
+          items={[
+            { label: 'Everything…', title: 'Blank strips and fresh slides (⌘N)', onSelect: onClear },
+            ...LANE_DEFS.filter((def) => !def.notesOnly || tonal).map((def) => ({
+              label: tonal && def.name === 'pitch' ? 'Note' : def.label,
+              title: `Clear the ${def.label} strip`,
+              onSelect: () => clearLane(def.name),
+            })),
+          ]}
+        />
 
         {(paper || tonal) && (
           <label className="toggle" title="Show what the machine reads from the marks">
@@ -1057,7 +1292,6 @@ export const App = (): JSX.Element => {
             ['servoScanner', 'Flying-spot scanner'],
             ['linearPitchScale', 'Pitch in Hertz'],
             ['relayLag', 'Relay lag'],
-            ['transportLane', 'Transport strip'],
             ['integerHzPitch', 'Whole-Hertz pitch'],
             ['opticalAmplitude', 'Optical amplitude'],
             ['monoSum', 'Mono'],
@@ -1075,34 +1309,57 @@ export const App = (): JSX.Element => {
         {status && <span className="status">{status}</span>}
       </section>
 
-      <main className="lanes">
-        <div className="timeline">
-          <Ruler
-            view={view}
-            onViewChange={setView}
-            duration={DURATION_S}
-            head={heads.pitch ?? null}
-            theme={theme}
-          />
-          <span className="zoom" title="Pinch, or hold ⌘ and scroll over a lane. Shift-scroll to move along, or drag the ruler.">
+      <section className="timeline">
+        <Ruler
+          view={view}
+          onViewChange={setView}
+          duration={DURATION_S}
+          head={heads.pitch ?? null}
+          theme={theme}
+        />
+        <span
+          className="zoom"
+          title="Pinch, or hold ⌘ and scroll over a lane. Shift-scroll to move along, or drag the ruler."
+        >
+          <span className="value">{((view.to - view.from) * DURATION_S).toFixed(1)} s</span>
+          <span className="segmented" role="group" aria-label="Zoom">
             <button
+              className="icon"
               onClick={() => setView((v) => zoomAt(v, 0.5, 2))}
               disabled={view.to - view.from >= 1}
+              title="Show more of the sheet"
+              aria-label="Zoom out"
             >
-              −
+              <ZoomIcon sign="out" />
             </button>
-            <span className="value">{((view.to - view.from) * DURATION_S).toFixed(1)} s</span>
-            <button onClick={() => setView((v) => zoomAt(v, 0.5, 0.5))}>+</button>
-            <button onClick={() => setView(FULL)} disabled={view.to - view.from >= 1}>
-              Fit
+            <button
+              className="icon"
+              onClick={() => setView((v) => zoomAt(v, 0.5, 0.5))}
+              title="Show less of the sheet, in more detail"
+              aria-label="Zoom in"
+            >
+              <ZoomIcon sign="in" />
             </button>
           </span>
-        </div>
+          <button
+            className="icon"
+            onClick={() => setView(FULL)}
+            disabled={view.to - view.from >= 1}
+            title="Fit the whole thirty seconds (⌘0)"
+            aria-label="Fit the whole sheet"
+          >
+            <FitIcon />
+          </button>
+        </span>
+      </section>
+
+      <main className="lanes">
         {LANE_DEFS.filter((def) => !def.notesOnly || tonal).map((def) => {
           const notes = tonal !== null && PITCH_LANES.has(def.name);
           const isNote = notes && def.name === 'pitch';
+          const quiet = muted.includes(def.name);
           return (
-            <div className="lane" key={def.name}>
+            <div className={quiet ? 'lane muted' : 'lane'} key={def.name}>
               <div className="lane-label">
                 <strong>
                   {isNote ? 'Note' : def.name === 'vibrato' && delay ? 'Delay' : def.label}
@@ -1115,6 +1372,15 @@ export const App = (): JSX.Element => {
                       : def.hint}
                 </span>
                 {def.pending && <span className="pending">not yet wired</span>}
+                <button
+                  className={quiet ? 'icon mute on' : 'icon mute'}
+                  onClick={() => toggleMute(def.name)}
+                  title={quiet ? `${def.label} is muted. Click to hear it again.` : `Mute ${def.label}`}
+                  aria-label={quiet ? `Unmute ${def.label}` : `Mute ${def.label}`}
+                  aria-pressed={quiet}
+                >
+                  {quiet ? <MutedIcon /> : <SoundIcon />}
+                </button>
                 {def.name === 'vibrato' && (
                   <div className="lane-tools">
                     <div className="segmented" role="group" aria-label="What this strip drives">
@@ -1254,6 +1520,7 @@ export const App = (): JSX.Element => {
                 reading={notes ? (isNote ? tonal.note : tonal.octave) : null}
                 markMode={notes ? markMode : 'lines'}
                 erasing={erasing}
+                tool={tool}
                 theme={theme}
                 backdrop={paper?.[def.name] ?? null}
                 showReading={showReading}
@@ -1306,32 +1573,80 @@ export const App = (): JSX.Element => {
             <div className="timbre" key={i}>
               <div className="lane-label">
                 <strong>Timbre {i + 1}</strong>
-                <PanDot
-                  value={pan[i]!}
-                  onChange={(v) => panTimbre(i, v)}
-                  label={`Pan timbre ${i + 1}`}
-                  dim={fidelity.monoSum}
-                  title={
-                    fidelity.monoSum
-                      ? 'Pan. Mono is on, so this is not heard yet; moving it turns Mono off. Double-click to centre.'
-                      : `Pan: ${panLabel(pan[i]!)}. Double-click to centre.`
-                  }
-                />
-                <select
-                  className="preset"
-                  value={presets[i]}
-                  title={`A starting shape for timbre ${i + 1}`}
-                  onChange={(e) => applyPreset(i, e.target.value)}
-                >
-                  <option value="" disabled>
-                    Preset
-                  </option>
-                  {PRESETS.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
+                <span className="pan-group">
+                  <span className="muted small">L</span>
+                  <PanDot
+                    value={pan[i]!}
+                    onChange={(v) => panTimbre(i, v)}
+                    label={`Pan timbre ${i + 1}`}
+                    dim={fidelity.monoSum}
+                    title={
+                      fidelity.monoSum
+                        ? 'Pan. Mono is on, so this is not heard yet; moving it turns Mono off. Double-click to centre.'
+                        : `Pan: ${panLabel(pan[i]!)}. Double-click to centre.`
+                    }
+                  />
+                  <span className="muted small">R</span>
+                </span>
+              </div>
+              {/* The four controls as their own row, so the name and the pan
+                  keep a line of their own and the row below lines up across
+                  all four timbres. */}
+              <div className="timbre-controls">
+                <span className="pick octave">
+                  <select
+                    className="preset"
+                    value={octaves[i]}
+                    title={`Timbre ${i + 1} plays this many octaves from the note`}
+                    aria-label={`Octave offset for timbre ${i + 1}`}
+                    onChange={(e) =>
+                      setOctaves((prev) =>
+                        prev.map((o, k) => (k === i ? Number(e.target.value) : o)),
+                      )
+                    }
+                  >
+                    {[-2, -1, 0, 1, 2].map((o) => (
+                      <option key={o} value={o}>
+                        {o === 0 ? '0' : o > 0 ? `+${o}` : String(o)}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+                <span className="pick">
+                  <select
+                    className="preset"
+                    value={presets[i]}
+                    title={`A starting shape for timbre ${i + 1}`}
+                    onChange={(e) => applyPreset(i, e.target.value)}
+                  >
+                    <option value="" disabled>
+                      Preset
                     </option>
-                  ))}
-                </select>
+                    {PRESETS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                    <option value="smooth">Smooth it</option>
+                  </select>
+                </span>
+                <span className="pick">
+                  <select
+                    className="preset"
+                    value={slip[i]}
+                    title={`How far timbre ${i + 1} drifts from the others`}
+                    aria-label={`Slip for timbre ${i + 1}`}
+                    onChange={(e) =>
+                      setSlip((prev) => prev.map((v, k) => (k === i ? Number(e.target.value) : v)))
+                    }
+                  >
+                    {SLIPS.map((s) => (
+                      <option key={s.label} value={s.amount}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </select>
+                </span>
                 <button
                   className="dice"
                   title={`Randomise timbre ${i + 1}`}
