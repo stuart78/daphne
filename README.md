@@ -4,7 +4,10 @@ A drawn-sound instrument after Daphne Oram's Oramics machine. You draw the
 sound, on paper or on screen, and the machine plays what you drew.
 
 Built for running workshops. Print the sheets, let people draw on them, play the
-results.
+results. It was written for [Drawing
+Sound](https://signalfunctionset.com/projects/oramics-workshop/), a workshop on
+Oram and the machine she spent her working life building; that page carries the
+slides and the speaker notes from the first half.
 
 ![The app with a piece on it](docs/images/app.png)
 
