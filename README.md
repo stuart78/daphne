@@ -6,6 +6,8 @@ sound, on paper or on screen, and the machine plays what you drew.
 Built for running workshops. Print the sheets, let people draw on them, play the
 results.
 
+![The app with a piece on it](docs/images/app.png)
+
 **[Download v0.4.0](https://github.com/stuart78/daphne/releases/tag/v0.4.0)**
 for macOS, Windows or Linux. The macOS build is signed and notarised, so it
 opens normally. Windows is unsigned and SmartScreen will warn once.
@@ -184,6 +186,8 @@ with your lines printed onto it. One page: every lane as a band, the four
 timbres in a strip underneath. Print it, let someone mark it up by hand, scan it
 back. That works because the app and the printed template share one geometry
 module.
+
+![A blank composition sheet, ready to print and draw on](docs/images/sheet.png)
 
 ## Reading a sheet back
 
@@ -405,6 +409,8 @@ Six, under the palette: Paper, Sepia and Blueprint are light, Charcoal,
 Midnight and Phosphor are dark. ⌘D steps through them. The choice is kept, and
 the shell is told which background to paint the window before the page loads,
 so a dark theme on a light desktop still opens without a flash.
+
+![The same piece in Charcoal, the dark theme](docs/images/app-dark.png)
 
 A theme is one block of custom properties in `app/src/ui/styles.css` and one
 entry in `app/src/ui/theme.ts`. The drawing surfaces are canvases and read the
